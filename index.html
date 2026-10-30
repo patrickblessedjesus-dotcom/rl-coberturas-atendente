@@ -116,7 +116,7 @@
   <div class="box">
     <h3>Ajustes da demo</h3>
     <label>Nome da empresa</label><input id="cfgNome">
-    <label>Preço por m² (R$)</label><input id="cfgPreco" type="number" step="1" min="1">
+    
     <label>Horários de visita (opcional)</label><input id="cfgHor" placeholder="ex: seg a sáb, 8h às 17h">
     <label>m² por convidado (quando o cliente só sabe o nº de pessoas)</label><input id="cfgPP" type="number" step="0.1" min="0.5">
     <div class="acts"><button class="sec" onclick="closeCfg()">Cancelar</button><button onclick="saveCfg()">Salvar</button></div>
@@ -124,7 +124,8 @@
 </div>
 
 <script>
-const S = { nome:"RL Coberturas", preco:180, m2PorPessoa:1.5, horarios:"segunda a sábado, das 8h às 17h" };
+const P = { sp:100, spNota:120, int:130, intNota:150 };
+const S = { nome:"RL Coberturas", m2PorPessoa:1.5, horarios:"segunda a sábado, das 8h às 17h" };
 const brl = v => Number(v).toLocaleString("pt-BR",{style:"currency",currency:"BRL",maximumFractionDigits:0});
 const num = s => parseFloat(String(s).replace(",","."));
 const $ = id => document.getElementById(id);
@@ -156,13 +157,13 @@ async function aiTurn(){
       body:JSON.stringify({messages:hist, config:S, temFoto:!!lead.foto, jaRegistrado:leadSent})});
     const j = await r.json().catch(()=>({}));
     typing(false);
-    if(j.fallback){ aiOk=false; busy=false; step="inicio"; hist=[]; return handle("oi"); }
+    if(j.fallback){ if(j.precos) Object.assign(P,j.precos); aiOk=false; busy=false; step="inicio"; hist=[]; return handle("oi"); }
     if(!r.ok){ bubble("bot", r.status===429 ? "Muita gente falando agora 😅 Me manda de novo daqui a pouquinho?" : "Opa, deu uma instabilidade aqui. Pode repetir a última mensagem?"); hist.pop(); busy=false; return; }
-    if(j.orcamento){ lead.area=j.orcamento.area; lead.valor=j.orcamento.valor; }
+    if(j.orcamento){ Object.assign(lead,j.orcamento); }
     const m=bubble("bot", fmt(j.reply));
     if(j.orcamento) m.classList.add("quote");
     hist.push({role:"assistant",content:j.reply});
-    if(j.pedido && !leadSent){ Object.assign(lead,j.pedido); if(j.pedido.valor) lead.valor=j.pedido.valor; enviarLead(); leadSent=true; }
+    if(j.pedido && !leadSent){ Object.assign(lead,j.pedido); enviarLead(); leadSent=true; }
   }catch(e){
     typing(false); hist.pop();
     bubble("bot","Opa, deu uma instabilidade aqui. Pode repetir a última mensagem?");
@@ -198,11 +199,15 @@ async function handle(t){
     case "inicio": step="tipo"; return bot([`Olá! 👋 Aqui é da *${S.nome}*.`,"Vou te ajudar com o orçamento da cobertura. É pra qual tipo de evento?"],["Casamento","Aniversário","Evento de empresa","Outro"]);
     case "tipo": lead.evento=t; step="data"; return bot(["Show! Qual a data do evento?"]);
     case "data": lead.data=t; step="local"; return bot(["E onde vai ser? Bairro e cidade."]);
-    case "local": lead.local=t; step="tamanho"; return bot(["Qual o tamanho da área? Pode ser a medida (ex: *10x20*) ou quantas pessoas vão."],["10x20","150 pessoas"]);
+    case "local": lead.local=t; step="regiao"; return bot(["É na cidade de São Paulo / Grande SP ou no interior?"],["São Paulo / Grande SP","Interior / fora de SP"]);
+    case "regiao": lead.regiao=/interior|fora/i.test(t)?"interior":"sp"; step="tamanho"; return bot(["Qual o tamanho da área? Pode ser a medida (ex: *10x20*) ou quantas pessoas vão."],["10x20","150 pessoas"]);
     case "tamanho": { const r=parseTamanho(t); if(!r) return bot(["Não entendi a medida 😅 Manda tipo *10x20* ou *150 pessoas*."]);
       lead.tamanho=r.desc; lead.area=Math.ceil(r.area); step="lateral"; return bot(["Vai precisar de fechamento lateral?"],["Sim","Não","Não sei"]); }
-    case "lateral": lead.fechamento_lateral=t; step="orc"; lead.valor=lead.area*S.preco;
-      return bot([{html:`📋 *Orçamento estimado*\n\nÁrea: ${esc(lead.tamanho)}\n${lead.area} m² × ${brl(S.preco)}/m²\n<b class="big">≈ ${brl(lead.valor)}</b>\n\n<i>Valor final após a visita de medição (gratuita).</i>`,cls:"quote"},"Quer agendar a visita?"],proximosDias().map(d=>d+" manhã"));
+    case "lateral": { lead.fechamento_lateral=t; step="nota";
+      const sem=lead.regiao==="interior"?P.int:P.sp, com=lead.regiao==="interior"?P.intNota:P.spNota;
+      lead.semNota=lead.area*sem; lead.comNota=lead.area*com;
+      return bot([{html:`📋 *Orçamento estimado*\n\nÁrea: ${esc(lead.tamanho)} (${lead.area} m²)\nRegião: ${lead.regiao==="interior"?"Interior":"São Paulo"}\n\nSem nota: ${lead.area} m² × ${brl(sem)} = <b class="big">${brl(lead.semNota)}</b>\nCom nota fiscal: ${lead.area} m² × ${brl(com)} = <b>${brl(lead.comNota)}</b>\n\n<i>Valor final após a visita de medição (gratuita).</i>`,cls:"quote"},"Vai precisar de nota fiscal?"],["Sim","Não"]); }
+    case "nota": lead.nota_fiscal=t; step="orc"; return bot(["Quer agendar a visita de medição?"],proximosDias().map(d=>d+" manhã"));
     case "orc": lead.visita=t; step="nome"; return bot(["Fechado ✅ Qual o seu nome?"]);
     case "nome": lead.nome=t; step="fim"; await bot([`Obrigado, ${t.split(" ")[0]}! O Rafael já recebeu seu pedido e confirma a visita por aqui 🙌`]); return enviarLead();
     default: return bot(["Seu pedido já está com o responsável 😉"]);
@@ -216,8 +221,8 @@ function enviarLead(){
   const row=(k,v)=> v?`<div class="row"><span>${k}</span><span>${esc(v)}</span></div>`:"";
   c.innerHTML=`<span class="tag">🆕 Novo pedido #${leadsCount} · ${now()}</span>
     ${row("Cliente",lead.nome)}${row("Evento",lead.evento)}${row("Data",lead.data)}${row("Local",lead.local)}
-    ${row("Tamanho",lead.tamanho)}${row("Fech. lateral",lead.fechamento_lateral)}${row("Visita",lead.visita)}${row("Obs.",lead.observacoes)}
-    ${lead.valor?`<div class="total">Estimativa: ${brl(lead.valor)}</div>`:""}
+    ${row("Tamanho",lead.tamanho)}${row("Região",lead.regiao?(lead.regiao==="interior"?"Interior":"São Paulo"):"")}${row("Nota fiscal",lead.nota_fiscal)}${row("Fech. lateral",lead.fechamento_lateral)}${row("Visita",lead.visita)}${row("Obs.",lead.observacoes)}
+    ${lead.semNota?`<div class="total">${/^s/i.test(lead.nota_fiscal||"")?`Estimativa c/ nota: ${brl(lead.comNota)}`:/^n[aã]o$/i.test(lead.nota_fiscal||"")?`Estimativa: ${brl(lead.semNota)}`:`${brl(lead.semNota)} <small style="font-weight:500;color:#6b736f">sem nota</small> · ${brl(lead.comNota)} <small style="font-weight:500;color:#6b736f">com nota</small>`}</div>`:""}
     ${lead.foto?`<img src="${lead.foto}" alt="Foto do local">`:""}
     <div class="acts"><button onclick="confirmar(this)">✓ Confirmar visita</button><button class="sec" onclick="view('cliente')">Ver conversa</button></div>`;
   $("leads").prepend(c);
@@ -230,11 +235,11 @@ function restart(){
   bubble("bot","💡 <i>Demo: você é o cliente. Escreve do seu jeito, como se fosse no WhatsApp.</i>");
 }
 function view(v){ document.body.dataset.v=v; $("tCli").classList.toggle("on",v==="cliente"); $("tDono").classList.toggle("on",v==="dono"); if(v==="dono") $("dot").style.display="none"; }
-function openCfg(){ $("cfgNome").value=S.nome; $("cfgPreco").value=S.preco; $("cfgPP").value=S.m2PorPessoa; $("cfgHor").value=S.horarios; $("cfg").classList.add("on"); }
+function openCfg(){ $("cfgNome").value=S.nome; $("cfgPP").value=S.m2PorPessoa; $("cfgHor").value=S.horarios; $("cfg").classList.add("on"); }
 function closeCfg(){ $("cfg").classList.remove("on"); }
 function aplicaNome(){ $("nomeEmp").textContent=S.nome; const w0=S.nome.trim().split(/\s+/)[0]; $("avTxt").textContent=(/^[A-Z]{2,3}$/.test(w0))?w0:S.nome.split(/\s+/).filter(w=>/^[A-Za-zÀ-ú]/.test(w)).slice(0,2).map(w=>w[0].toUpperCase()).join("")||"RL"; }
 function saveCfg(){
-  S.nome=$("cfgNome").value.trim()||S.nome; S.preco=num($("cfgPreco").value)||S.preco; S.m2PorPessoa=num($("cfgPP").value)||S.m2PorPessoa; S.horarios=$("cfgHor").value.trim()||S.horarios;
+  S.nome=$("cfgNome").value.trim()||S.nome; S.m2PorPessoa=num($("cfgPP").value)||S.m2PorPessoa; S.horarios=$("cfgHor").value.trim()||S.horarios;
   aplicaNome(); try{ localStorage.setItem("rlCfg", JSON.stringify(S)); }catch(e){} closeCfg();
 }
 

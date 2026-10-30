@@ -6,7 +6,11 @@ const path = require("path");
 const PORT = process.env.PORT || 3000;
 const KEY = process.env.OPENAI_API_KEY || "";
 const MODELS = (process.env.OPENAI_MODEL || "gpt-5.4-mini,gpt-5-mini,gpt-4o-mini").split(",").map(s => s.trim()).filter(Boolean);
-const PRECO_PADRAO = Number(process.env.PRECO_M2 || 180);
+const PRECOS = {
+  sp: Number(process.env.PRECO_SP || 100), spNota: Number(process.env.PRECO_SP_NOTA || 120),
+  int: Number(process.env.PRECO_INTERIOR || 130), intNota: Number(process.env.PRECO_INTERIOR_NOTA || 150),
+};
+function tabela(regiao) { return regiao === "interior" ? { sem: PRECOS.int, com: PRECOS.intNota } : { sem: PRECOS.sp, com: PRECOS.spNota }; }
 
 const brl = v => Number(v).toLocaleString("pt-BR", { style: "currency", currency: "BRL", maximumFractionDigits: 0 });
 
@@ -33,7 +37,10 @@ Colete de forma natural (pule o que o cliente já respondeu):
 5. se precisa de fechamento lateral
 6. (opcional) foto do local — o cliente pode mandar pelo ícone de câmera
 
-Preço: R$ ${c.preco} por m². Quando tiver a área, use a ferramenta calcular_orcamento e passe o valor ESTIMADO, deixando claro que o preço final sai depois da visita técnica de medição, que é gratuita. Não invente outros preços, taxas ou descontos; se perguntarem algo que você não sabe (frete, montagem fora de SP, outros itens), diga que o Rafael confirma na visita.
+Tabela de preço por m²:
+- São Paulo (capital e Grande SP): R$ ${PRECOS.sp}/m² sem nota fiscal, R$ ${PRECOS.spNota}/m² com nota fiscal
+- Interior / fora de SP: R$ ${PRECOS.int}/m² sem nota fiscal, R$ ${PRECOS.intNota}/m² com nota fiscal
+Descubra a região pelo local do evento (se não der pra saber, pergunte). Quando tiver a área e a região, use a ferramenta calcular_orcamento e passe o valor ESTIMADO mostrando as duas opções (sem nota e com nota fiscal); depois pergunte se o cliente vai precisar de nota fiscal. Deixe claro que o preço final sai depois da visita técnica de medição, que é gratuita. Não invente outros preços, taxas ou descontos; se perguntarem algo que você não sabe (frete, montagem fora de SP, outros itens), diga que o Rafael confirma na visita.
 
 Depois do orçamento, ofereça agendar a visita de medição (horários: ${c.horarios}). Pegue o dia/horário preferido e o nome do cliente. Quando tiver tudo, chame registrar_pedido UMA vez e confirme ao cliente que o pedido foi passado ao responsável, que vai confirmar a visita por aqui.
 
@@ -41,13 +48,15 @@ Se o cliente fugir do assunto, responda com educação e traga de volta para o o
 }
 
 const tools = [
-  { type: "function", function: { name: "calcular_orcamento", description: "Calcula o valor estimado da cobertura a partir da área em m². Use sempre que for informar preço.",
-    parameters: { type: "object", properties: { area_m2: { type: "number", description: "Área total em m²" } }, required: ["area_m2"] } } },
+  { type: "function", function: { name: "calcular_orcamento", description: "Calcula o valor estimado da cobertura (sem nota e com nota fiscal) a partir da área em m² e da região. Use sempre que for informar preço.",
+    parameters: { type: "object", properties: { area_m2: { type: "number", description: "Área total em m²" },
+      regiao: { type: "string", enum: ["sp", "interior"], description: "sp = capital e Grande SP; interior = interior ou fora de SP" } }, required: ["area_m2", "regiao"] } } },
   { type: "function", function: { name: "registrar_pedido", description: "Envia o pedido completo para o dono. Chame uma única vez, quando já tiver nome, evento, data, local, tamanho e horário da visita.",
     parameters: { type: "object", properties: {
       nome: { type: "string" }, evento: { type: "string" }, data: { type: "string" }, local: { type: "string" },
       tamanho: { type: "string", description: "medida ou área, ex: 30x30 m (900 m²)" }, area_m2: { type: "number" },
-      fechamento_lateral: { type: "string" }, visita: { type: "string" }, observacoes: { type: "string" } },
+      fechamento_lateral: { type: "string" }, regiao: { type: "string", enum: ["sp", "interior"] },
+      nota_fiscal: { type: "string", description: "sim, não ou não informado" }, visita: { type: "string" }, observacoes: { type: "string" } },
       required: ["nome", "evento", "data", "local", "tamanho", "visita"] } } }
 ];
 
@@ -71,7 +80,6 @@ async function openai(body) {
 async function chat(req) {
   const c = {
     nome: String(req.config?.nome || "RL Coberturas").slice(0, 60),
-    preco: Number(req.config?.preco) > 0 ? Number(req.config.preco) : PRECO_PADRAO,
     m2PorPessoa: Number(req.config?.m2PorPessoa) > 0 ? Number(req.config.m2PorPessoa) : 1.5,
     horarios: String(req.config?.horarios || "segunda a sábado, das 8h às 17h").slice(0, 120),
   };
@@ -92,11 +100,12 @@ async function chat(req) {
       let args = {}; try { args = JSON.parse(tc.function.arguments || "{}"); } catch {}
       let result;
       if (tc.function.name === "calcular_orcamento") {
-        const a = Math.ceil(Number(args.area_m2) || 0), v = a * c.preco;
-        out.orcamento = { area: a, valor: v };
-        result = { area_m2: a, preco_m2: c.preco, valor_estimado: brl(v) };
+        const a = Math.ceil(Number(args.area_m2) || 0), t = tabela(args.regiao);
+        out.orcamento = { area: a, regiao: args.regiao === "interior" ? "interior" : "sp", semNota: a * t.sem, comNota: a * t.com };
+        result = { area_m2: a, regiao: out.orcamento.regiao, preco_m2_sem_nota: t.sem, preco_m2_com_nota: t.com,
+          valor_sem_nota: brl(a * t.sem), valor_com_nota: brl(a * t.com) };
       } else if (tc.function.name === "registrar_pedido") {
-        if (args.area_m2) { const a = Math.ceil(args.area_m2); args.area = a; args.valor = a * c.preco; }
+        if (args.area_m2) { const a = Math.ceil(args.area_m2), t = tabela(args.regiao); args.area = a; args.semNota = a * t.sem; args.comNota = a * t.com; }
         out.pedido = args; result = { ok: true };
       } else result = { erro: "ferramenta desconhecida" };
       msgs.push({ role: "tool", tool_call_id: tc.id, content: JSON.stringify(result) });
@@ -114,7 +123,7 @@ http.createServer(async (req, res) => {
     req.on("data", d => { body += d; if (body.length > 200000) req.destroy(); });
     req.on("end", async () => {
       res.setHeader("Content-Type", "application/json");
-      if (!KEY) return res.end(JSON.stringify({ fallback: true }));
+      if (!KEY) return res.end(JSON.stringify({ fallback: true, precos: PRECOS }));
       if (limited(ip)) { res.statusCode = 429; return res.end(JSON.stringify({ erro: "limite" })); }
       try { res.end(JSON.stringify(await chat(JSON.parse(body || "{}")))); }
       catch (e) { console.error(e); res.statusCode = 500; res.end(JSON.stringify({ erro: "falha" })); }
