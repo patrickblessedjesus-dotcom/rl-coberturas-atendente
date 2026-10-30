@@ -1,0 +1,255 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>RL Coberturas – Atendimento</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg:#f3efe8; --panel:#ffffff; --ink:#1d2321; --muted:#6b736f;
+    --brand:#0f5b4f; --brand2:#e98a2b; --me:#d8f0e3; --bot:#ffffff; --line:#e3ddd2;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;height:100%;font-family:Inter,system-ui,sans-serif;color:var(--ink);background:#e9e4da}
+  .app{display:flex;gap:20px;justify-content:center;align-items:stretch;padding:20px;height:100%}
+  .phone{width:400px;max-width:100%;display:flex;flex-direction:column;background:var(--bg);border-radius:22px;overflow:hidden;box-shadow:0 10px 40px rgba(0,0,0,.12);border:1px solid var(--line)}
+  .owner{width:380px;display:flex;flex-direction:column;background:var(--panel);border-radius:22px;overflow:hidden;box-shadow:0 10px 40px rgba(0,0,0,.08);border:1px solid var(--line)}
+  header{background:var(--brand);color:#fff;padding:14px 16px;display:flex;align-items:center;gap:12px}
+  .av{width:40px;height:40px;border-radius:50%;background:var(--brand2);display:grid;place-items:center;font-weight:700;flex:none}
+  header .t{font-weight:600;font-size:15px;line-height:1.2}
+  header .s{font-size:12px;opacity:.8}
+  header button{margin-left:auto;background:rgba(255,255,255,.15);border:0;color:#fff;border-radius:10px;padding:7px 10px;font:inherit;font-size:12px;cursor:pointer}
+  .chat{flex:1;overflow-y:auto;padding:16px 12px;display:flex;flex-direction:column;gap:6px}
+  .msg{max-width:84%;min-width:78px;padding:9px 12px 18px;border-radius:12px;font-size:14.5px;line-height:1.4;position:relative;white-space:pre-wrap;word-wrap:break-word;box-shadow:0 1px 1px rgba(0,0,0,.06);animation:pop .18s ease-out}
+  .msg .h{position:absolute;right:9px;bottom:4px;font-size:10.5px;color:var(--muted)}
+  .bot{align-self:flex-start;background:var(--bot);border-top-left-radius:4px}
+  .me{align-self:flex-end;background:var(--me);border-top-right-radius:4px}
+  .msg img{display:block;max-width:220px;border-radius:8px;margin-bottom:2px}
+  .quote{border-left:4px solid var(--brand2);background:#fff7ee}
+  .quote b.big{font-size:20px;color:var(--brand)}
+  .typing{align-self:flex-start;background:#fff;border-radius:12px;padding:10px 14px;display:flex;gap:4px}
+  .typing i{width:7px;height:7px;border-radius:50%;background:#b5b9b6;animation:bl 1s infinite}
+  .typing i:nth-child(2){animation-delay:.15s}.typing i:nth-child(3){animation-delay:.3s}
+  @keyframes bl{0%,80%,100%{opacity:.3}40%{opacity:1}}
+  @keyframes pop{from{transform:translateY(4px);opacity:0}to{transform:none;opacity:1}}
+  .chips{display:flex;flex-wrap:wrap;gap:6px;padding:0 12px 8px}
+  .chips button{border:1px solid var(--brand);color:var(--brand);background:#fff;border-radius:999px;padding:7px 12px;font:inherit;font-size:13px;cursor:pointer}
+  .chips button:hover{background:var(--brand);color:#fff}
+  form.in{display:flex;gap:8px;padding:10px;background:#ece7de;align-items:center}
+  form.in input[type=text]{flex:1;border:0;border-radius:22px;padding:11px 14px;font:inherit;font-size:14.5px;outline:none}
+  .ib{width:42px;height:42px;border-radius:50%;border:0;background:var(--brand);color:#fff;display:grid;place-items:center;cursor:pointer;flex:none}
+  .ib.alt{background:#fff;color:var(--brand)}
+  .ib svg{width:20px;height:20px}
+  .owner header{background:#2a302d}
+  .leads{flex:1;overflow-y:auto;padding:14px;display:flex;flex-direction:column;gap:12px;background:#f7f5f1}
+  .empty{color:var(--muted);font-size:14px;text-align:center;margin-top:40px;line-height:1.5;padding:0 20px}
+  .card{background:#fff;border:1px solid var(--line);border-radius:14px;padding:14px;font-size:14px;animation:pop .25s ease-out}
+  .card .tag{display:inline-block;background:#fdecd8;color:#a2560d;font-size:11px;font-weight:600;border-radius:6px;padding:3px 7px;margin-bottom:8px}
+  .card .tag.ok{background:#dcf1e6;color:var(--brand)}
+  .row{display:flex;justify-content:space-between;gap:10px;padding:5px 0;border-bottom:1px dashed #eee}
+  .row span:first-child{color:var(--muted)}
+  .row span:last-child{text-align:right;font-weight:500}
+  .total{margin-top:8px;font-size:18px;font-weight:700;color:var(--brand)}
+  .card img{width:100%;border-radius:8px;margin-top:8px}
+  .card .acts{display:flex;gap:8px;margin-top:10px}
+  .card .acts button{flex:1;border:0;border-radius:10px;padding:9px;font:inherit;font-size:13px;font-weight:600;cursor:pointer;background:var(--brand);color:#fff}
+  .card .acts button.sec{background:#eef1ef;color:var(--ink)}
+  .tabs{display:none}
+  .modal{position:fixed;inset:0;background:rgba(0,0,0,.35);display:none;align-items:center;justify-content:center;z-index:9;padding:20px}
+  .modal.on{display:flex}
+  .modal .box{background:#fff;border-radius:16px;padding:20px;width:340px;max-width:100%}
+  .modal h3{margin:0 0 12px;font-size:16px}
+  .modal label{display:block;font-size:13px;color:var(--muted);margin:10px 0 4px}
+  .modal input{width:100%;border:1px solid var(--line);border-radius:10px;padding:10px;font:inherit}
+  .modal .acts{display:flex;gap:8px;margin-top:16px}
+  .modal .acts button{flex:1;border:0;border-radius:10px;padding:10px;font:inherit;font-weight:600;cursor:pointer;background:var(--brand);color:#fff}
+  .modal .acts button.sec{background:#eef1ef;color:var(--ink)}
+  @media (max-width:820px){
+    .app{padding:0;gap:0;flex-direction:column}
+    .phone,.owner{width:100%;border-radius:0;border:0;box-shadow:none;flex:1;min-height:0}
+    .tabs{display:flex;background:#2a302d}
+    .tabs button{flex:1;border:0;background:none;color:#cfd5d2;padding:11px;font:inherit;font-size:13px;font-weight:600;cursor:pointer;border-bottom:3px solid transparent}
+    .tabs button.on{color:#fff;border-color:var(--brand2)}
+    .tabs .dot{display:inline-block;min-width:18px;height:18px;border-radius:9px;background:var(--brand2);color:#fff;font-size:11px;line-height:18px;margin-left:6px;padding:0 5px}
+    body[data-v=cliente] .owner{display:none}
+    body[data-v=dono] .phone{display:none}
+  }
+</style>
+</head>
+<body data-v="cliente">
+<div class="tabs">
+  <button id="tCli" class="on" onclick="view('cliente')">📱 Visão do cliente</button>
+  <button id="tDono" onclick="view('dono')">🧑‍💼 Visão do empresário<span class="dot" id="dot" style="display:none">0</span></button>
+</div>
+<div class="app">
+  <section class="phone">
+    <header>
+      <div class="av" id="avTxt">RL</div>
+      <div><div class="t" id="nomeEmp">RL Coberturas</div><div class="s" id="status">online</div></div>
+      <button onclick="openCfg()">⚙︎ Ajustes</button>
+      <button onclick="restart()">↻ Nova</button>
+    </header>
+    <div class="chat" id="chat"></div>
+    <div class="chips" id="chips"></div>
+    <form class="in" id="form">
+      <label class="ib alt" title="Enviar foto" style="cursor:pointer">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15V8a2 2 0 0 0-2-2h-3l-2-2h-4L8 6H5a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h7"/><circle cx="12" cy="12" r="3"/><path d="M19 16v6M16 19h6"/></svg>
+        <input type="file" accept="image/*" id="file" hidden>
+      </label>
+      <input type="text" id="txt" placeholder="Digite uma mensagem" autocomplete="off">
+      <button class="ib" type="submit" title="Enviar"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M3 20.5 21 12 3 3.5l.01 6.6L15 12 3.01 13.9z"/></svg></button>
+    </form>
+  </section>
+  <section class="owner">
+    <header>
+      <div class="av" style="background:#4a524e">🧑‍💼</div>
+      <div><div class="t">Painel do empresário</div><div class="s">Pedidos que o bot já organizou</div></div>
+    </header>
+    <div class="leads" id="leads">
+      <div class="empty" id="empty">Ainda não chegou nenhum pedido.<br><br>Faça uma conversa como se fosse o cliente. Quando ela terminar, o resumo pronto aparece aqui.</div>
+    </div>
+  </section>
+</div>
+
+<div class="modal" id="cfg">
+  <div class="box">
+    <h3>Ajustes da demo</h3>
+    <label>Nome da empresa</label><input id="cfgNome">
+    <label>Preço por m² (R$)</label><input id="cfgPreco" type="number" step="1" min="1">
+    <label>Horários de visita (opcional)</label><input id="cfgHor" placeholder="ex: seg a sáb, 8h às 17h">
+    <label>m² por convidado (quando o cliente só sabe o nº de pessoas)</label><input id="cfgPP" type="number" step="0.1" min="0.5">
+    <div class="acts"><button class="sec" onclick="closeCfg()">Cancelar</button><button onclick="saveCfg()">Salvar</button></div>
+  </div>
+</div>
+
+<script>
+const S = { nome:"RL Coberturas", preco:180, m2PorPessoa:1.5, horarios:"segunda a sábado, das 8h às 17h" };
+const brl = v => Number(v).toLocaleString("pt-BR",{style:"currency",currency:"BRL",maximumFractionDigits:0});
+const num = s => parseFloat(String(s).replace(",","."));
+const $ = id => document.getElementById(id);
+let step, lead, busy=false, leadsCount=0, hist=[], sample=null, aiOk=true, leadSent=false;
+
+function now(){ return new Date().toLocaleTimeString("pt-BR",{hour:"2-digit",minute:"2-digit"}); }
+function scroll(){ const c=$("chat"); c.scrollTop=c.scrollHeight; }
+function esc(t){ return String(t).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c])); }
+function fmt(t){ return esc(t).replace(/\*(.+?)\*/g,"<b>$1</b>").replace(/_(.+?)_/g,"<i>$1</i>"); }
+function bubble(who, html, cls=""){
+  const m=document.createElement("div"); m.className=`msg ${who} ${cls}`;
+  m.innerHTML = `<span class="c">${html}</span><span class="h">${now()}${who==="me"?" ✓✓":""}</span>`;
+  $("chat").appendChild(m); scroll(); return m;
+}
+function chips(list){ const c=$("chips"); c.innerHTML=""; (list||[]).forEach(t=>{ const b=document.createElement("button"); b.type="button"; b.textContent=t; b.onclick=()=>send(t); c.appendChild(b); }); }
+function typing(on){
+  let t=document.querySelector(".typing");
+  if(on && !t){ t=document.createElement("div"); t.className="typing"; t.innerHTML="<i></i><i></i><i></i>"; $("chat").appendChild(t); scroll(); }
+  if(!on && t) t.remove();
+  $("status").textContent = on ? "digitando…" : "online";
+}
+const wait = ms => new Promise(r=>setTimeout(r,ms));
+
+/* ---------- IA (via servidor) ---------- */
+async function aiTurn(){
+  busy=true; chips([]); typing(true);
+  try{
+    const r = await fetch("/api/chat",{method:"POST",headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({messages:hist, config:S, temFoto:!!lead.foto, jaRegistrado:leadSent})});
+    const j = await r.json().catch(()=>({}));
+    typing(false);
+    if(j.fallback){ aiOk=false; busy=false; step="inicio"; hist=[]; return handle("oi"); }
+    if(!r.ok){ bubble("bot", r.status===429 ? "Muita gente falando agora 😅 Me manda de novo daqui a pouquinho?" : "Opa, deu uma instabilidade aqui. Pode repetir a última mensagem?"); hist.pop(); busy=false; return; }
+    if(j.orcamento){ lead.area=j.orcamento.area; lead.valor=j.orcamento.valor; }
+    const m=bubble("bot", fmt(j.reply));
+    if(j.orcamento) m.classList.add("quote");
+    hist.push({role:"assistant",content:j.reply});
+    if(j.pedido && !leadSent){ Object.assign(lead,j.pedido); if(j.pedido.valor) lead.valor=j.pedido.valor; enviarLead(); leadSent=true; }
+  }catch(e){
+    typing(false); hist.pop();
+    bubble("bot","Opa, deu uma instabilidade aqui. Pode repetir a última mensagem?");
+  }
+  busy=false; $("txt").focus();
+}
+
+/* ---------- envio ---------- */
+async function send(text){
+  if(busy) return;
+  text=(text||"").trim(); if(!text) return;
+  bubble("me", esc(text)); $("txt").value="";
+    if(aiOk){ hist.push({role:"user",content:text}); aiTurn(); }
+  else { aiOk=false; handle(text); }
+}
+
+/* ---------- modo roteiro (reserva, se a IA não estiver disponível) ---------- */
+async function bot(msgs, nextChips){
+  busy=true; chips([]);
+  for(const m of msgs){ typing(true); const txt=typeof m==="string"?m:m.html;
+    await wait(Math.min(450+txt.length*9,1500)); typing(false);
+    typeof m==="string" ? bubble("bot", fmt(m)) : bubble("bot", m.html.replace(/\*(.+?)\*/g,"<b>$1</b>"), m.cls||""); }
+  chips(nextChips); busy=false;
+}
+function proximosDias(){ const out=[], d=new Date(), dias=["dom","seg","ter","qua","qui","sex","sáb"];
+  while(out.length<3){ d.setDate(d.getDate()+1); if(d.getDay()===0) continue; out.push(`${dias[d.getDay()]} ${String(d.getDate()).padStart(2,"0")}/${String(d.getMonth()+1).padStart(2,"0")}`); } return out; }
+function parseTamanho(t){ const s=t.toLowerCase();
+  let m=s.match(/(\d+(?:[.,]\d+)?)\s*(?:m\s*)?(?:x|×|\*|por)\s*(\d+(?:[.,]\d+)?)/); if(m) return {area:num(m[1])*num(m[2]), desc:`${m[1]} x ${m[2]} m`};
+  m=s.match(/(\d+(?:[.,]\d+)?)\s*(?:m2|m²|metros?\s*quadrados?)/); if(m) return {area:num(m[1]), desc:`${m[1]} m²`};
+  m=s.match(/(\d+)/); if(m){ const p=parseInt(m[1]); const area=Math.ceil(p*S.m2PorPessoa/10)*10; return {area, desc:`~${area} m² (p/ ${p} pessoas)`, pessoas:p}; } return null; }
+async function handle(t){
+  switch(step){
+    case "inicio": step="tipo"; return bot([`Olá! 👋 Aqui é da *${S.nome}*.`,"Vou te ajudar com o orçamento da cobertura. É pra qual tipo de evento?"],["Casamento","Aniversário","Evento de empresa","Outro"]);
+    case "tipo": lead.evento=t; step="data"; return bot(["Show! Qual a data do evento?"]);
+    case "data": lead.data=t; step="local"; return bot(["E onde vai ser? Bairro e cidade."]);
+    case "local": lead.local=t; step="tamanho"; return bot(["Qual o tamanho da área? Pode ser a medida (ex: *10x20*) ou quantas pessoas vão."],["10x20","150 pessoas"]);
+    case "tamanho": { const r=parseTamanho(t); if(!r) return bot(["Não entendi a medida 😅 Manda tipo *10x20* ou *150 pessoas*."]);
+      lead.tamanho=r.desc; lead.area=Math.ceil(r.area); step="lateral"; return bot(["Vai precisar de fechamento lateral?"],["Sim","Não","Não sei"]); }
+    case "lateral": lead.fechamento_lateral=t; step="orc"; lead.valor=lead.area*S.preco;
+      return bot([{html:`📋 *Orçamento estimado*\n\nÁrea: ${esc(lead.tamanho)}\n${lead.area} m² × ${brl(S.preco)}/m²\n<b class="big">≈ ${brl(lead.valor)}</b>\n\n<i>Valor final após a visita de medição (gratuita).</i>`,cls:"quote"},"Quer agendar a visita?"],proximosDias().map(d=>d+" manhã"));
+    case "orc": lead.visita=t; step="nome"; return bot(["Fechado ✅ Qual o seu nome?"]);
+    case "nome": lead.nome=t; step="fim"; await bot([`Obrigado, ${t.split(" ")[0]}! O Rafael já recebeu seu pedido e confirma a visita por aqui 🙌`]); return enviarLead();
+    default: return bot(["Seu pedido já está com o responsável 😉"]);
+  }
+}
+
+/* ---------- painel do empresário ---------- */
+function enviarLead(){
+  $("empty")?.remove(); leadsCount++;
+  const c=document.createElement("div"); c.className="card";
+  const row=(k,v)=> v?`<div class="row"><span>${k}</span><span>${esc(v)}</span></div>`:"";
+  c.innerHTML=`<span class="tag">🆕 Novo pedido #${leadsCount} · ${now()}</span>
+    ${row("Cliente",lead.nome)}${row("Evento",lead.evento)}${row("Data",lead.data)}${row("Local",lead.local)}
+    ${row("Tamanho",lead.tamanho)}${row("Fech. lateral",lead.fechamento_lateral)}${row("Visita",lead.visita)}${row("Obs.",lead.observacoes)}
+    ${lead.valor?`<div class="total">Estimativa: ${brl(lead.valor)}</div>`:""}
+    ${lead.foto?`<img src="${lead.foto}" alt="Foto do local">`:""}
+    <div class="acts"><button onclick="confirmar(this)">✓ Confirmar visita</button><button class="sec" onclick="view('cliente')">Ver conversa</button></div>`;
+  $("leads").prepend(c);
+  if(document.body.dataset.v!=="dono"){ const d=$("dot"); d.style.display="inline-block"; d.textContent=leadsCount; }
+}
+function confirmar(b){ const tag=b.closest(".card").querySelector(".tag"); tag.className="tag ok"; tag.textContent="✅ Visita confirmada"; b.disabled=true; b.textContent="Confirmado"; }
+
+function restart(){
+  $("chat").innerHTML=""; lead={}; hist=[]; leadSent=false; step="inicio"; chips(["Oi, quero um orçamento de cobertura","Quanto fica uma tenda pra 100 pessoas?"]);
+  bubble("bot","💡 <i>Demo: você é o cliente. Escreve do seu jeito, como se fosse no WhatsApp.</i>");
+}
+function view(v){ document.body.dataset.v=v; $("tCli").classList.toggle("on",v==="cliente"); $("tDono").classList.toggle("on",v==="dono"); if(v==="dono") $("dot").style.display="none"; }
+function openCfg(){ $("cfgNome").value=S.nome; $("cfgPreco").value=S.preco; $("cfgPP").value=S.m2PorPessoa; $("cfgHor").value=S.horarios; $("cfg").classList.add("on"); }
+function closeCfg(){ $("cfg").classList.remove("on"); }
+function aplicaNome(){ $("nomeEmp").textContent=S.nome; const w0=S.nome.trim().split(/\s+/)[0]; $("avTxt").textContent=(/^[A-Z]{2,3}$/.test(w0))?w0:S.nome.split(/\s+/).filter(w=>/^[A-Za-zÀ-ú]/.test(w)).slice(0,2).map(w=>w[0].toUpperCase()).join("")||"RL"; }
+function saveCfg(){
+  S.nome=$("cfgNome").value.trim()||S.nome; S.preco=num($("cfgPreco").value)||S.preco; S.m2PorPessoa=num($("cfgPP").value)||S.m2PorPessoa; S.horarios=$("cfgHor").value.trim()||S.horarios;
+  aplicaNome(); try{ localStorage.setItem("rlCfg", JSON.stringify(S)); }catch(e){} closeCfg();
+}
+
+$("form").addEventListener("submit",e=>{ e.preventDefault(); send($("txt").value); });
+$("file").addEventListener("change",e=>{
+  const f=e.target.files[0]; if(!f||busy) return;
+  const r=new FileReader(); r.onload=()=>{
+    bubble("me",`<img src="${r.result}" alt="foto">`); lead.foto=r.result;
+    if(aiOk){ hist.push({role:"user",content:"[cliente enviou uma foto do local]"}); aiTurn(); }
+    else bot(["Recebi a foto, valeu! 📸 Vou anexar ao pedido."]);
+  }; r.readAsDataURL(f); e.target.value="";
+});
+
+try{ const c=JSON.parse(localStorage.getItem("rlCfg")||"null"); if(c) Object.assign(S,c); }catch(e){}
+aplicaNome(); restart();
+</script>
+</body>
+</html>

@@ -1,0 +1,9 @@
+{
+  "name": "rl-coberturas-atendente",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Atendente virtual de cotação da RL Coberturas (demo)",
+  "main": "server.js",
+  "scripts": { "start": "node server.js" },
+  "engines": { "node": ">=18" }
+}
