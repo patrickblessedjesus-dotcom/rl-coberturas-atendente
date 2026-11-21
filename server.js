@@ -1,9 +1,7 @@
-// Atendente RL Coberturas — site de demo + WhatsApp (Z-API). Sem dependências.
+// Atendente RL Coberturas — WhatsApp (Z-API). Sem dependências.
 const http = require("http");
 const net = require("net");
 const tls = require("tls");
-const fs = require("fs");
-const path = require("path");
 
 const PORT = process.env.PORT || 3000;
 const KEY = process.env.OPENAI_API_KEY || "";
@@ -98,13 +96,6 @@ async function proximoPedido() {
 }
 
 // ---------- IA ----------
-const hits = new Map();
-function limited(ip) {
-  const now = Date.now(), win = 10 * 60 * 1000, max = 60;
-  const arr = (hits.get(ip) || []).filter(t => now - t < win);
-  arr.push(now); hits.set(ip, arr);
-  return arr.length > max;
-}
 
 function instrucoes(c) {
   const hoje = new Date().toLocaleDateString("pt-BR", { timeZone: "America/Sao_Paulo", weekday: "long", day: "2-digit", month: "long", year: "numeric" });
@@ -394,19 +385,6 @@ async function receberWhatsApp(ev) {
 }
 
 http.createServer(async (req, res) => {
-  const ip = (req.headers["x-forwarded-for"] || req.socket.remoteAddress || "").split(",")[0].trim();
-  if (req.method === "POST" && req.url === "/api/chat") {
-    let body = "";
-    req.on("data", d => { body += d; if (body.length > 200000) req.destroy(); });
-    req.on("end", async () => {
-      res.setHeader("Content-Type", "application/json");
-      if (!KEY) return res.end(JSON.stringify({ fallback: true, precos: PRECOS }));
-      if (limited(ip)) { res.statusCode = 429; return res.end(JSON.stringify({ erro: "limite" })); }
-      try { res.end(JSON.stringify(await chat(JSON.parse(body || "{}")))); }
-      catch (e) { console.error(e); res.statusCode = 500; res.end(JSON.stringify({ erro: "falha" })); }
-    });
-    return;
-  }
   if (req.method === "POST" && usaZapi() && ZAPI.secret && req.url.split("?")[0] === "/zapi/" + ZAPI.secret) {
     let body = "";
     req.on("data", d => { body += d; if (body.length > 2000000) req.destroy(); });
@@ -419,11 +397,6 @@ http.createServer(async (req, res) => {
     return;
   }
   if (req.url === "/health") return res.end(`ok · IA: ${KEY ? "ligada" : "desligada"} · WhatsApp: ${usaZapi() ? "Z-API ok" : "desligado"} · Rafael: ${RAFAEL ? "sim" : "não"} · memória: ${REDIS_URL ? "Key Value" : "temporária"}`);
-  const p = req.url.split("?")[0];
-  if (p !== "/" && p !== "/index.html") { res.statusCode = 404; return res.end("não encontrado"); }
-  fs.readFile(path.join(__dirname, "index.html"), (err, data) => {
-    if (err) { res.statusCode = 500; return res.end("erro"); }
-    res.setHeader("Content-Type", "text/html; charset=utf-8");
-    res.end(data);
-  });
+  res.setHeader("Content-Type", "text/plain; charset=utf-8");
+  res.end("RL Coberturas · atendimento pelo WhatsApp");
 }).listen(PORT, () => console.log(`RL Coberturas no ar na porta ${PORT} · IA: ${KEY ? "ligada" : "DESLIGADA (falta OPENAI_API_KEY)"} · WhatsApp: ${usaZapi() ? "Z-API ok" : "desligado"} · memória: ${REDIS_URL ? "Key Value" : "temporária"}`));
