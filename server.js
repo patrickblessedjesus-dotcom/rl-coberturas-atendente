@@ -17,6 +17,8 @@ const PRECOS = {
   },
 };
 const NOME_MAT = { policarbonato: "Policarbonato", lona: "Lona", plastico: "Plástico" };
+// fotos de exemplo dos materiais (links públicos de imagem), ex: FOTO_POLICARBONATO=https://...
+const FOTOS = { policarbonato: process.env.FOTO_POLICARBONATO || "", lona: process.env.FOTO_LONA || "", plastico: process.env.FOTO_PLASTICO || "" };
 function precoM2(modalidade, regiao, material) {
   if (modalidade === "compra") return PRECOS.venda[material] || null;
   return regiao === "interior" ? PRECOS.locacao.interior : PRECOS.locacao.sp;
@@ -121,14 +123,16 @@ ALUGUEL — o que precisa (pule o que já tem):
 1. tipo de evento e data  2. bairro/cidade
 3. tamanho da área (ex: 10x20 m ou "varanda de 14 m"). Se não souber, pergunte quantas pessoas e estime ${c.m2PorPessoa} m² por pessoa, arredondando pra cima. Se ele disser só um lado (ex: 14 m), pergunte a outra medida aproximada.
 4. se precisa de fechamento lateral (só se fizer sentido)
-Preço de referência do aluguel por m²: São Paulo capital e Grande SP R$ ${PRECOS.locacao.sp}; interior / fora de SP R$ ${PRECOS.locacao.interior}.
+O valor depende da região (São Paulo capital/Grande SP ou interior/fora de SP) — a ferramenta calcula.
 
 COMPRA — o que precisa (pule o que já tem):
-1. material — 3 opções: *Policarbonato* (R$ ${PRECOS.venda.policarbonato}/m²), *Lona* (R$ ${PRECOS.venda.lona}/m²) e *Plástico* (R$ ${PRECOS.venda.plastico}/m²). Se não souber, explique rapidinho e ajude a escolher.
+1. material — 3 opções: *Policarbonato*, *Lona* e *Plástico*. Se o cliente não souber qual quer, explique rapidinho a diferença e ofereça mandar fotos de cada material pra ajudar a escolher (ferramenta enviar_fotos_materiais).
 2. bairro/cidade e que lugar é  3. tamanho da área  4. pra quando precisa
 
 PREÇO
 - Use SEMPRE a ferramenta calcular_orcamento pra dar valor. Não faça conta de cabeça.
+- Passe SÓ o *valor final* da cobertura (ex: "10x10 fica em torno de R$ 12.000"). NUNCA fale o preço do metro quadrado, nem a conta "m² × preço".
+- Na compra, calcule só o material que o cliente escolheu. Só mande as 3 opções (policarbonato, lona e plástico, cada uma com o valor final) se o cliente PEDIR pra comparar.
 - Todo valor é *estimativa*: varia com a distância e com as medidas reais, e o *valor final oficial sai só depois da visita técnica*.
 - Fale um único valor (já com nota fiscal). NÃO ofereça sem nota nem desconto; se pedirem, diga que isso o Rafael conversa direto.
 - Não invente frete, prazos, disponibilidade de data ou outros preços. Não prometa disponibilidade pra data do evento: diga que o Rafael confirma.
@@ -150,6 +154,8 @@ const tools = [
       regiao: { type: "string", enum: ["sp", "interior"], description: "Só aluguel. sp = capital e Grande SP; interior = interior ou fora de SP" },
       material: { type: "string", enum: ["policarbonato", "lona", "plastico"], description: "Só compra" } },
       required: ["modalidade", "area_m2"] } } },
+  { type: "function", function: { name: "enviar_fotos_materiais", description: "Manda pro cliente fotos de exemplo dos materiais (policarbonato, lona, plástico) pra ajudar a escolher. Use quando o cliente aceitar ver as fotos.",
+    parameters: { type: "object", properties: { materiais: { type: "array", items: { type: "string", enum: ["policarbonato", "lona", "plastico"] }, description: "quais mandar; vazio = os 3" } } } } },
   { type: "function", function: { name: "passar_para_rafael", description: "Passa a conversa pro Rafael e você para de responder este cliente. Use quando for cliente antigo/assunto já em andamento com o Rafael, ou algo que não é orçamento novo.",
     parameters: { type: "object", properties: { nome: { type: "string" }, motivo: { type: "string", description: "resumo curto do que o cliente quer" } }, required: ["motivo"] } } },
   { type: "function", function: { name: "registrar_pedido", description: "Envia o pedido completo pro Rafael aprovar a visita. Chame uma única vez, quando já tiver nome, modalidade, endereço/local, tamanho e as opções de horário da visita.",
@@ -225,7 +231,7 @@ async function chat(req) {
   try { msgs = montar(true); var primeira = await openai({ messages: msgs, tools }); }
   catch (e) { if (!req.imagens?.length) throw e; msgs = montar(false); primeira = await openai({ messages: msgs, tools }); }
 
-  const out = { reply: "", orcamento: null, pedido: null, passar: null };
+  const out = { reply: "", orcamento: null, pedido: null, passar: null, fotos: null };
   let j = primeira;
   for (let i = 0; i < 4; i++) {
     if (i > 0) j = await openai({ messages: msgs, tools });
@@ -243,14 +249,18 @@ async function chat(req) {
         else {
           out.orcamento = { modalidade: mod, area: a, regiao: mod === "aluguel" ? reg : undefined, material: mod === "compra" ? args.material : undefined, precoM2: p, valor: a * p };
           result = { modalidade: mod, area_m2: a, ...(mod === "aluguel" ? { regiao: reg } : { material: NOME_MAT[args.material] }),
-            preco_m2: brl(p), valor_estimado: brl(a * p),
-            lembrete: "Estimativa com nota. Varia com distância e medidas; valor final oficial só após a visita técnica." };
+            valor_final_estimado: brl(a * p),
+            lembrete: "Passe só o valor final (nunca preço por m²). Estimativa com nota; varia com distância e medidas; valor final oficial só após a visita técnica." };
         }
       } else if (tc.function.name === "registrar_pedido") {
         const a = Math.ceil(Number(args.area_m2) || 0);
         const p = precoM2(args.modalidade === "compra" ? "compra" : "locacao", args.regiao, args.material);
         if (a && p) { args.area = a; args.precoM2 = p; args.valor = a * p; }
         out.pedido = args; result = { ok: true };
+      } else if (tc.function.name === "enviar_fotos_materiais") {
+        const lista = (Array.isArray(args.materiais) && args.materiais.length ? args.materiais : ["policarbonato", "lona", "plastico"]).filter(m => FOTOS[m]);
+        if (!lista.length) result = { ok: false, obs: "As fotos ainda não estão disponíveis. Diga que vai pedir pro Rafael mandar fotos dos materiais e siga o atendimento." };
+        else { out.fotos = lista; result = { ok: true, obs: "As fotos vão logo depois da sua mensagem. Diga só algo curto tipo 'Vou te mandar as fotos de cada um 👇'." }; }
       } else if (tc.function.name === "passar_para_rafael") {
         out.passar = args; result = { ok: true, obs: "Avise o cliente que o Rafael já foi avisado e responde por aqui. Depois disso você não fala mais com ele." };
       } else result = { erro: "ferramenta desconhecida" };
@@ -384,6 +394,7 @@ async function responder(phone) {
     const r = await chat({ messages: c.hist, imagens: b.imagens, temFoto: c.temFoto, jaRegistrado: !!c.pedidoId });
     c.hist.push({ role: "assistant", content: r.reply }); c.hist = c.hist.slice(-30);
     await zapiTexto(phone, r.reply);
+    for (const m of r.fotos || []) await zapi("send-image", { phone, image: FOTOS[m], caption: `*${NOME_MAT[m]}*` });
     if (r.passar && !r.pedido) {
       c.status = "humano";
       console.log("Passou pro Rafael", phone);
