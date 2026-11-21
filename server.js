@@ -33,6 +33,7 @@ const ZAPI = {
 const RAFAEL = (process.env.RAFAEL_WHATSAPP || "").replace(/\D/g, ""); // número pessoal do Rafael: recebe os pedidos e aprova
 const ESPERA_MS = Number(process.env.ESPERA_SEGUNDOS || 10) * 1000;   // junta mensagens seguidas do cliente antes de responder
 const usaZapi = () => !!(ZAPI.id && ZAPI.token);
+const ATIVO_DESDE = Date.parse(process.env.ATIVO_DESDE || "") || 0; // só responde mensagens que chegarem depois disso
 const enviadosPeloBot = new Set(); // ids das mensagens que o próprio bot mandou (pra não confundir com o Rafael digitando)
 
 async function zapi(rota, corpo) {
@@ -99,12 +100,15 @@ async function proximoPedido() {
 
 function instrucoes(c) {
   const hoje = new Date().toLocaleDateString("pt-BR", { timeZone: "America/Sao_Paulo", weekday: "long", day: "2-digit", month: "long", year: "numeric" });
-  return `Você atende o WhatsApp da *${c.nome}*, empresa de São Paulo do Rafael que monta coberturas (tendas, lonas, estruturas de ferro, policarbonato).
+  return `Você é a *Suelen*, assistente do Rafael na *${c.nome}*, empresa de São Paulo que monta coberturas (tendas, lonas, estruturas de ferro, policarbonato). Você atende o WhatsApp da empresa.
 A maioria dos clientes quer ALUGAR cobertura pra um evento (aniversário, almoço, churrasco, casamento, festa de empresa), muitas vezes pra cobrir varanda, área da piscina, salão de festas ou quintal, ou por medo de chuva. Alguns querem COMPRAR uma cobertura fixa pra ficar no lugar.
 
 SEU TRABALHO É SÓ ESTE: entender o pedido, passar uma estimativa e pré-agendar a visita técnica. Quem fecha, negocia e confirma tudo é o Rafael.
 
-Jeito de falar: como o Rafael fala no WhatsApp — simples, educado e direto ("Boa tarde! Tudo bem?", "Fazemos sim!"). Português do Brasil, mensagens curtas (1 a 3 frases), no máximo 1 emoji. Use *negrito* do WhatsApp com moderação. No máximo UMA pergunta por mensagem. Não diga que é uma IA a menos que perguntem; se perguntarem, diga que é o assistente virtual da ${c.nome} e que o Rafael acompanha todos os pedidos.
+Jeito de falar: simples, educado e direto, do jeito que o Rafael fala no WhatsApp ("Boa tarde! Tudo bem?", "Fazemos sim!"). Português do Brasil, mensagens curtas (1 a 3 frases), no máximo 1 emoji. Use *negrito* do WhatsApp com moderação. No máximo UMA pergunta por mensagem. Fale no feminino (você é a Suelen). Na PRIMEIRA resposta da conversa, se apresente: "Aqui é a Suelen, assistente do Rafael da ${c.nome}". Se perguntarem se você é robô/IA, diga com naturalidade que é a assistente virtual do Rafael e que ele acompanha todos os pedidos.
+
+CLIENTE QUE JÁ FALAVA COM O RAFAEL
+Este número já era usado pelo Rafael antes de você começar. Se a mensagem não parecer um pedido NOVO de orçamento — ex.: o cliente fala de algo já combinado, um serviço já marcado, montagem, pagamento, contrato, "e aí, confirmado?", "conforme falamos", responde algo que parece continuação de conversa — NÃO comece o atendimento do zero. Se tiver dúvida, pergunte de forma simples se é um orçamento novo ou se é sobre algo que ele já estava vendo com o Rafael. Se for algo que já estava com o Rafael (ou assunto que não é orçamento, como fornecedor, cobrança, pessoal), chame passar_para_rafael e diga que já avisou o Rafael e que ele responde por aqui.
 
 COMO CONDUZIR
 - O cliente costuma mandar várias mensagens seguidas, com foto, vídeo e medidas aproximadas. Leia TUDO que ele já mandou e NÃO pergunte de novo o que ele já disse.
@@ -146,6 +150,8 @@ const tools = [
       regiao: { type: "string", enum: ["sp", "interior"], description: "Só aluguel. sp = capital e Grande SP; interior = interior ou fora de SP" },
       material: { type: "string", enum: ["policarbonato", "lona", "plastico"], description: "Só compra" } },
       required: ["modalidade", "area_m2"] } } },
+  { type: "function", function: { name: "passar_para_rafael", description: "Passa a conversa pro Rafael e você para de responder este cliente. Use quando for cliente antigo/assunto já em andamento com o Rafael, ou algo que não é orçamento novo.",
+    parameters: { type: "object", properties: { nome: { type: "string" }, motivo: { type: "string", description: "resumo curto do que o cliente quer" } }, required: ["motivo"] } } },
   { type: "function", function: { name: "registrar_pedido", description: "Envia o pedido completo pro Rafael aprovar a visita. Chame uma única vez, quando já tiver nome, modalidade, endereço/local, tamanho e as opções de horário da visita.",
     parameters: { type: "object", properties: {
       nome: { type: "string" }, modalidade: { type: "string", enum: ["aluguel", "compra"] },
@@ -219,7 +225,7 @@ async function chat(req) {
   try { msgs = montar(true); var primeira = await openai({ messages: msgs, tools }); }
   catch (e) { if (!req.imagens?.length) throw e; msgs = montar(false); primeira = await openai({ messages: msgs, tools }); }
 
-  const out = { reply: "", orcamento: null, pedido: null };
+  const out = { reply: "", orcamento: null, pedido: null, passar: null };
   let j = primeira;
   for (let i = 0; i < 4; i++) {
     if (i > 0) j = await openai({ messages: msgs, tools });
@@ -245,6 +251,8 @@ async function chat(req) {
         const p = precoM2(args.modalidade === "compra" ? "compra" : "locacao", args.regiao, args.material);
         if (a && p) { args.area = a; args.precoM2 = p; args.valor = a * p; }
         out.pedido = args; result = { ok: true };
+      } else if (tc.function.name === "passar_para_rafael") {
+        out.passar = args; result = { ok: true, obs: "Avise o cliente que o Rafael já foi avisado e responde por aqui. Depois disso você não fala mais com ele." };
       } else result = { erro: "ferramenta desconhecida" };
       msgs.push({ role: "tool", tool_call_id: tc.id, content: JSON.stringify(result) });
     }
@@ -279,14 +287,59 @@ function resumoPedido(p, phone, id) {
   l.push("*Responde aqui:*");
   l.push(`✅ *ok ${id}* → confirma a visita (ou *ok ${id} sábado 10h* pra escolher o horário)`);
   l.push(`🔁 *outro ${id} sexta 14h* → sugere outro horário pro cliente`);
-  l.push(`🙋 *assumir ${id}* → o bot para e você segue a conversa`);
+  l.push(`🙋 *assumir ${id}* → a Suelen para e você segue a conversa`);
   return l.join("\n");
+}
+
+// ---------- horário da visita + agenda ----------
+const AGENDA_URL = (process.env.AGENDA_WEBHOOK_URL || "").trim(); // Apps Script na conta Google do Rafael (cria o evento sozinho)
+const DURACAO_MIN = Number(process.env.VISITA_MINUTOS || 60);
+function agoraSP() { return new Date().toLocaleString("sv-SE", { timeZone: "America/Sao_Paulo" }).replace(" ", "T").slice(0, 16); }
+async function entenderHorario(texto) {
+  if (!texto || !KEY) return null;
+  try {
+    const j = await openai({ response_format: { type: "json_object" }, messages: [
+      { role: "system", content: `Agora em São Paulo é ${agoraSP()} (${new Date().toLocaleDateString("pt-BR", { timeZone: "America/Sao_Paulo", weekday: "long" })}). Converta o horário de visita escrito pelo usuário em UMA data e hora. Responda só JSON: {"ok":true,"inicio":"AAAA-MM-DDTHH:MM"} ou {"ok":false} se tiver mais de uma opção, faltar o dia ou faltar a hora. Datas sempre no futuro. "manhã" sem hora = 09:00, "tarde" sem hora = 14:00, "noite" = 19:00.` },
+      { role: "user", content: texto }] });
+    const r = JSON.parse(j.choices[0].message.content || "{}");
+    if (!r.ok || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(r.inicio || "")) return null;
+    const d = new Date(r.inicio + ":00-03:00");
+    const txt = d.toLocaleString("pt-BR", { timeZone: "America/Sao_Paulo", weekday: "long", day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" }).replace(",", "").replace(":00", "h").replace(/(\d{2}):(\d{2})$/, "$1h$2");
+    return { inicio: r.inicio, texto: txt };
+  } catch (e) { console.error("entender horário", e.message || e); return null; }
+}
+function linkAgenda(ev) {
+  const f = s => s.replace(/[-:]/g, "") + "00";
+  const q = new URLSearchParams({ action: "TEMPLATE", text: ev.titulo, dates: `${f(ev.inicio)}/${f(ev.fim)}`, ctz: "America/Sao_Paulo", details: ev.descricao, location: ev.local });
+  return "https://calendar.google.com/calendar/render?" + q.toString();
+}
+async function agendar(c, phone, id, h) {
+  const p = c.pedido || {};
+  const fimD = new Date(new Date(h.inicio + ":00-03:00").getTime() + DURACAO_MIN * 60000);
+  const fim = fimD.toLocaleString("sv-SE", { timeZone: "America/Sao_Paulo" }).replace(" ", "T").slice(0, 16);
+  const ev = {
+    titulo: `Visita técnica — ${p.nome || "cliente"} (#${id})`,
+    inicio: h.inicio, fim, local: p.local || "",
+    descricao: [`Pedido #${id} · ${p.modalidade === "compra" ? "Compra" : "Aluguel"}`, `Cliente: ${p.nome || "-"} · WhatsApp +${phone}`,
+      p.evento && `Evento/uso: ${p.evento}`, p.data && `Data: ${p.data}`, p.tamanho && `Tamanho: ${p.tamanho}`,
+      p.material && `Material: ${NOME_MAT[p.material] || p.material}`, p.valor && `Estimativa c/ nota: ${brl(p.valor)}`, p.observacoes && `Obs.: ${p.observacoes}`,
+      `https://wa.me/${phone}`].filter(Boolean).join("\n"),
+  };
+  if (AGENDA_URL) {
+    try {
+      const r = await fetch(AGENDA_URL, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ segredo: process.env.AGENDA_SEGREDO || "", ...ev }), redirect: "follow", signal: AbortSignal.timeout(20000) });
+      const j = await r.json().catch(() => ({}));
+      if (j.ok) return zapiTexto(RAFAEL, `📅 Já marquei na sua Google Agenda, com lembrete.`);
+      console.error("agenda recusou", r.status, JSON.stringify(j).slice(0, 200));
+    } catch (e) { console.error("agenda erro", e.message || e); }
+  }
+  return zapiTexto(RAFAEL, `📅 Toca aqui pra salvar na sua Google Agenda:\n${linkAgenda(ev)}`);
 }
 
 async function comandoRafael(texto) {
   const m = texto.trim().match(/^(ok|okay|sim|aprovad[oa]|aprovar|confirmad[oa]|confirmar|outro|remarcar|assumir|parar|bot|voltar)\b\s*#?\s*(\d+)?\s*(.*)$/is);
   if (!m) {
-    return zapiTexto(RAFAEL, "Comandos:\n✅ *ok 12* (ou *ok 12 sábado 10h*) → confirma a visita\n🔁 *outro 12 sexta 14h* → sugere outro horário\n🙋 *assumir 12* → bot para de responder o cliente\n🤖 *bot 12* → bot volta a atender o cliente");
+    return zapiTexto(RAFAEL, "Comandos:\n✅ *ok 12* (ou *ok 12 sábado 10h*) → confirma a visita\n🔁 *outro 12 sexta 14h* → sugere outro horário\n🙋 *assumir 12* → Suelen para de responder o cliente\n🤖 *bot 12* → Suelen volta a atender o cliente");
   }
   const cmd = m[1].toLowerCase(), extra = (m[3] || "").trim();
   const id = m[2] ? Number(m[2]) : await ler("rl:ultimo");
@@ -295,10 +348,12 @@ async function comandoRafael(texto) {
   return naFila(phone, async () => {
     const c = await conversa(phone);
     if (/^(ok|okay|sim|aprov|confirm)/.test(cmd)) {
-      const quando = extra || c.visita;
-      await zapiTexto(phone, `✅ Visita técnica confirmada${quando ? ": *" + quando + "*" : ""}.\nA partir de agora o Rafael segue com você por aqui. Obrigado!`);
-      c.status = "humano"; await salvar(phone, c);
-      return zapiTexto(RAFAEL, `Feito! Pedido #${id} confirmado e avisei o cliente. Daqui pra frente o bot não responde mais ele — é com você 👊`);
+      const h = await entenderHorario(extra || c.visita);
+      if (!h) return zapiTexto(RAFAEL, `O cliente deu estas opções: *${c.visita || "-"}*.\nQual horário fica? Manda assim: *ok ${id} sábado 10h*`);
+      await zapiTexto(phone, `✅ Visita técnica confirmada: *${h.texto}*.\nA partir de agora o Rafael segue com você por aqui. Obrigado!`);
+      c.status = "humano"; c.visitaConfirmada = h.inicio; await salvar(phone, c);
+      await zapiTexto(RAFAEL, `Feito! Pedido #${id} confirmado pra *${h.texto}* e avisei o cliente. Daqui pra frente a Suelen não responde mais ele — é com você 👊`);
+      return agendar(c, phone, id, h);
     }
     if (/^(outro|remarcar)/.test(cmd)) {
       if (!extra) return zapiTexto(RAFAEL, `Me fala o horário, ex: *outro ${id} sexta 14h*`);
@@ -329,9 +384,14 @@ async function responder(phone) {
     const r = await chat({ messages: c.hist, imagens: b.imagens, temFoto: c.temFoto, jaRegistrado: !!c.pedidoId });
     c.hist.push({ role: "assistant", content: r.reply }); c.hist = c.hist.slice(-30);
     await zapiTexto(phone, r.reply);
+    if (r.passar && !r.pedido) {
+      c.status = "humano";
+      console.log("Passou pro Rafael", phone);
+      if (RAFAEL) await zapiTexto(RAFAEL, `📲 *Cliente pra você responder*\n\n*Contato:* ${r.passar.nome || "-"} (+${phone})\n*Assunto:* ${r.passar.motivo || "-"}\n\nA Suelen parou nesse cliente. Responde direto pelo número da empresa.`);
+    }
     if (r.pedido && !c.pedidoId) {
       const id = await proximoPedido();
-      c.pedidoId = id; c.status = "aguardando"; c.visita = r.pedido.visita || "";
+      c.pedidoId = id; c.status = "aguardando"; c.visita = r.pedido.visita || ""; c.pedido = r.pedido;
       await gravar("rl:p:" + id, phone); await gravar("rl:ultimo", id);
       console.log("Pedido registrado #" + id, phone, r.pedido.modalidade);
       if (RAFAEL) await zapiTexto(RAFAEL, resumoPedido(r.pedido, phone, id));
@@ -349,6 +409,8 @@ async function receberWhatsApp(ev) {
   const phone = String(ev.phone || "").replace(/\D/g, "");
   if (!phone || ev.isGroup || ev.isNewsletter || ev.broadcast || String(ev.phone).includes("@")) return;
   if (ev.messageId) { if (vistos.has(ev.messageId)) return; vistos.add(ev.messageId); }
+  const quando = Number(ev.momment || ev.moment || 0);
+  if (quando && (quando < ATIVO_DESDE || Date.now() - quando > 5 * 60 * 1000)) return; // mensagem antiga: não responde
 
   // mensagem que saiu do número da empresa: se não foi o bot, é o Rafael respondendo → bot para nesse cliente
   if (ev.fromMe) {
