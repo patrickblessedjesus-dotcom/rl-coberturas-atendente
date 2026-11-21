@@ -411,6 +411,11 @@ async function responder(phone) {
     if (RAFAEL) await zapiTexto(RAFAEL, `💬 Cliente do pedido #${c.pedidoId} respondeu sobre o horário:\n"${texto.slice(0, 500)}"\n\nSe estiver ok: *ok ${c.pedidoId} ${c.visita}*`);
     return zapiTexto(phone, "Show, já passei pro Rafael! Ele te confirma por aqui 👍");
   }
+  if (!c.hist.length && !c.avisado && RAFAEL) {
+    c.avisado = true;
+    const prev = texto.length > 300 ? texto.slice(0, 300) + "…" : texto;
+    await zapiTexto(RAFAEL, `👀 *Novo atendimento da Suelen*\n\n*Contato:* ${b.nome ? b.nome + " " : ""}(+${phone})\n*Mensagem:* ${prev}\n\nhttps://wa.me/${phone}\n_Se quiser assumir, é só responder o cliente pelo número da empresa que a Suelen para._`);
+  }
   c.hist.push({ role: "user", content: texto.slice(0, 2500) });
   if (b.temMidia) c.temFoto = true;
   try {
@@ -475,6 +480,7 @@ async function receberWhatsApp(ev) {
 
   let b = buffers.get(phone);
   if (!b) { b = { partes: [], imagens: [], temMidia: false, timer: null }; buffers.set(phone, b); }
+  if (!b.nome) b.nome = String(ev.senderName || ev.chatName || "").slice(0, 60);
   b.partes.push(texto); if (imagem) b.imagens.push(imagem); if (midia) b.temMidia = true;
   clearTimeout(b.timer);
   b.timer = setTimeout(() => naFila(phone, () => responder(phone)), ESPERA_MS);
