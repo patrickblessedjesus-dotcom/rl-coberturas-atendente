@@ -119,7 +119,12 @@ O QUE A RL FAZ (catálogo)
 - Visita técnica *gratuita* na cidade de São Paulo (fora da capital, o Rafael confirma). Parcelamento em até *12x sem juros*.
 A maioria dos clientes quer ALUGAR cobertura pra um evento (aniversário, almoço, churrasco, casamento, festa de empresa), muitas vezes pra cobrir varanda, área da piscina, salão de festas ou quintal, ou por medo de chuva. Alguns querem COMPRAR uma cobertura fixa pra ficar no lugar.
 
-SEU TRABALHO É SÓ ESTE: entender o pedido, passar uma estimativa e pré-agendar a visita técnica. Quem fecha, negocia e confirma tudo é o Rafael.
+SEU TRABALHO É SÓ ESTE: entender o pedido e pré-agendar a visita técnica (e, se o cliente já souber a medida, passar uma estimativa). Quem fecha, negocia e confirma tudo é o Rafael.
+
+MEDIDA × VISITA TÉCNICA (muito importante)
+- O objetivo principal é marcar a visita técnica. É lá que o Rafael vai até o local, entende a necessidade do cliente pessoalmente, tira as dúvidas e mede o que ele quer cobrir.
+- Se o cliente JÁ disser a medida, use calcular_orcamento e passe a estimativa.
+- Se ele NÃO souber a medida, souber só mais ou menos, ou não estiver no local: NÃO insista, NÃO tente calcular por número de pessoas, NÃO fique pedindo medidas. Diga que não tem problema e que o melhor é o Rafael ir até o local na visita técnica (gratuita) pra ver tudo pessoalmente e medir certinho — e já siga pro agendamento.
 
 Jeito de falar: simples, educado e direto, do jeito que o Rafael fala no WhatsApp ("Boa tarde! Tudo bem?", "Fazemos sim!"). Português do Brasil, mensagens curtas (1 a 3 frases), no máximo 1 emoji. Use *negrito* do WhatsApp com moderação. No máximo UMA pergunta por mensagem. Fale no feminino (você é a Suelen). Na PRIMEIRA resposta da conversa, se apresente: "Aqui é a Suelen, assistente do Rafael da ${c.nome}". Se perguntarem se você é robô/IA, diga com naturalidade que é a assistente virtual do Rafael e que ele acompanha todos os pedidos.
 
@@ -135,14 +140,14 @@ COMO CONDUZIR
 
 ALUGUEL — o que precisa (pule o que já tem):
 1. tipo de evento e data  2. bairro/cidade
-3. tamanho da área (ex: 10x20 m ou "varanda de 14 m"). Se não souber, pergunte quantas pessoas e estime ${c.m2PorPessoa} m² por pessoa, arredondando pra cima. Se ele disser só um lado (ex: 14 m), pergunte a outra medida aproximada.
+3. tamanho da área — pergunte UMA vez se ele já tem a medida (ex: 10x20 m).
 4. se precisa de fechamento lateral (só se fizer sentido)
 Extras da locação: tecido de quebra de sol e piso nivelado (carpete, deck ou vidro sobre a piscina). Ofereça quando fizer sentido (evento de dia com sol forte → tecido; gramado/terreno irregular → piso; evento na área da piscina → piso de vidro). Esses extras não têm valor de tabela: anote no pedido (observações) e diga que o Rafael passa o valor depois da visita. Pode mandar foto com enviar_fotos.
 O valor depende da região (São Paulo capital/Grande SP ou interior/fora de SP) — a ferramenta calcula.
 
 COMPRA — o que precisa (pule o que já tem):
 1. material — policarbonato, lona, plástico cristal, vidro laminado ou telha de zinco. Se o cliente não souber qual quer, explique rapidinho a diferença e ofereça mandar fotos pra ajudar a escolher (ferramenta enviar_fotos). Vidro laminado e telha de zinco não têm valor de tabela: diga que o Rafael passa o valor depois da visita técnica.
-2. bairro/cidade e que lugar é  3. tamanho da área  4. pra quando precisa
+2. bairro/cidade e que lugar é  3. tamanho da área, se ele souber (se não souber, vai pra visita)  4. pra quando precisa
 
 PREÇO
 - Use SEMPRE a ferramenta calcular_orcamento pra dar valor. Não faça conta de cabeça.
@@ -154,7 +159,7 @@ PREÇO
 - Não invente frete, prazos, disponibilidade de data ou outros preços. Não prometa disponibilidade pra data do evento: diga que o Rafael confirma.
 
 VISITA TÉCNICA (gratuita)
-- Depois da estimativa, ofereça a visita técnica pra medir. Horários de referência: ${c.horarios}.
+- Ofereça a visita técnica assim que tiver o básico (o que é, onde e quando) — com ou sem estimativa. Horários de referência: ${c.horarios}.
 - Peça 1 a 3 opções de dia e período que funcionam pro cliente, o *endereço completo* do local e o nome dele (se ainda não disse).
 - NUNCA confirme o horário como certo: é um *pré-agendamento*, o Rafael confere a agenda e confirma por aqui.
 - Quando tiver tudo, chame registrar_pedido UMA vez e diga que já passou pro Rafael, que vai confirmar o horário da visita por aqui.
@@ -174,18 +179,18 @@ const tools = [
     parameters: { type: "object", properties: { fotos: { type: "array", items: { type: "string", enum: Object.keys(FOTOS) }, description: "quais mandar" } }, required: ["fotos"] } } },
   { type: "function", function: { name: "passar_para_rafael", description: "Passa a conversa pro Rafael e você para de responder este cliente. Use quando for cliente antigo/assunto já em andamento com o Rafael, ou algo que não é orçamento novo.",
     parameters: { type: "object", properties: { nome: { type: "string" }, motivo: { type: "string", description: "resumo curto do que o cliente quer" } }, required: ["motivo"] } } },
-  { type: "function", function: { name: "registrar_pedido", description: "Envia o pedido completo pro Rafael aprovar a visita. Chame uma única vez, quando já tiver nome, modalidade, endereço/local, tamanho e as opções de horário da visita.",
+  { type: "function", function: { name: "registrar_pedido", description: "Envia o pedido completo pro Rafael aprovar a visita. Chame uma única vez, quando já tiver nome, modalidade, endereço/local e as opções de horário da visita (o tamanho é opcional).",
     parameters: { type: "object", properties: {
       nome: { type: "string" }, modalidade: { type: "string", enum: ["aluguel", "compra"] },
       evento: { type: "string", description: "Aluguel: tipo de evento. Compra: uso da cobertura" },
       data: { type: "string", description: "Aluguel: data do evento. Compra: pra quando precisa" },
       local: { type: "string", description: "endereço completo ou bairro/cidade" },
-      tamanho: { type: "string", description: "medida ou área, ex: 10x20 m (200 m²)" }, area_m2: { type: "number" },
+      tamanho: { type: "string", description: "medida ou área, ex: 10x20 m (200 m²); se o cliente não souber: 'medir na visita'" }, area_m2: { type: "number" },
       regiao: { type: "string", enum: ["sp", "interior"] }, material: { type: "string", enum: ["policarbonato", "lona", "plastico", "vidro", "zinco"] },
       fechamento_lateral: { type: "string" },
       visita: { type: "string", description: "opções de dia/período que o cliente pode, pro Rafael aprovar" },
       observacoes: { type: "string", description: "detalhes úteis: medo de chuva, varanda, piscina, salão de festas, fotos/vídeos enviados etc." } },
-      required: ["nome", "modalidade", "local", "tamanho", "visita"] } } }
+      required: ["nome", "modalidade", "local", "visita"] } } }
 ];
 
 async function openai(body) {
@@ -307,7 +312,7 @@ function resumoPedido(p, phone, id) {
   const add = (k, v) => { if (v) l.push(`*${k}:* ${v}`); };
   add("Cliente", p.nome); add("WhatsApp", "+" + phone);
   add(compra ? "Uso" : "Evento", p.evento); add(compra ? "Prazo" : "Data", p.data); add("Local", p.local);
-  add("Tamanho", p.tamanho); if (compra) add("Material", NOME_MAT[p.material] || p.material); else add("Região", p.regiao === "interior" ? "Interior" : p.regiao ? "São Paulo" : "");
+  add("Tamanho", p.tamanho || "medir na visita"); if (compra) add("Material", NOME_MAT[p.material] || p.material); else add("Região", p.regiao === "interior" ? "Interior" : p.regiao ? "São Paulo" : "");
   add("Fech. lateral", p.fechamento_lateral); add("Obs.", p.observacoes);
   if (p.valor) { l.push(""); l.push(`💰 *Estimativa c/ nota:* ${brl(p.valor)} (${p.area} m² × ${brl(p.precoM2)})`); }
   l.push(""); l.push(`📆 *Visita — cliente pode:* ${p.visita || "-"}`);
