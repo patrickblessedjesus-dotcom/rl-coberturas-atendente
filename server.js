@@ -2,6 +2,8 @@
 const http = require("http");
 const net = require("net");
 const tls = require("tls");
+const fs = require("fs");
+const path = require("path");
 
 const PORT = process.env.PORT || 3000;
 const KEY = process.env.OPENAI_API_KEY || "";
@@ -16,9 +18,15 @@ const PRECOS = {
     plastico: Number(process.env.PRECO_PLASTICO || 300),
   },
 };
-const NOME_MAT = { policarbonato: "Policarbonato", lona: "Lona", plastico: "Plástico" };
-// fotos de exemplo dos materiais (links públicos de imagem), ex: FOTO_POLICARBONATO=https://...
-const FOTOS = { policarbonato: process.env.FOTO_POLICARBONATO || "", lona: process.env.FOTO_LONA || "", plastico: process.env.FOTO_PLASTICO || "" };
+const NOME_MAT = { policarbonato: "Policarbonato", lona: "Lona vinílica translúcida", plastico: "Plástico cristal", vidro: "Vidro laminado", zinco: "Telha de zinco termoacústica" };
+// páginas do catálogo da RL (arquivos .jpg no repositório), servidas em /fotos/<nome>.jpg
+const FOTOS = {
+  "venda-plastico": "Venda · Plástico cristal transparente", "venda-lona": "Venda · Lona vinílica translúcida", "venda-policarbonato": "Venda · Policarbonato",
+  "venda-vidro": "Venda · Vidro laminado", "venda-zinco": "Venda · Telha de zinco termoacústica",
+  "locacao-plastico": "Locação · Cobertura em plástico cristal", "locacao-tecido": "Locação · Tecido pra quebra de sol",
+  "piso-carpete": "Locação · Piso nivelado com carpete", "piso-deck": "Locação · Piso nivelado com deck", "piso-vidro": "Locação · Piso de vidro temperado (sobre piscina)",
+};
+const URL_PUBLICA = (process.env.RENDER_EXTERNAL_URL || process.env.URL_PUBLICA || "https://rl-coberturas.onrender.com").replace(/\/$/, "");
 function precoM2(modalidade, regiao, material) {
   if (modalidade === "compra") return PRECOS.venda[material] || null;
   return regiao === "interior" ? PRECOS.locacao.interior : PRECOS.locacao.sp;
@@ -102,7 +110,12 @@ async function proximoPedido() {
 
 function instrucoes(c) {
   const hoje = new Date().toLocaleDateString("pt-BR", { timeZone: "America/Sao_Paulo", weekday: "long", day: "2-digit", month: "long", year: "numeric" });
-  return `Você é a *Suelen*, assistente do Rafael na *${c.nome}*, empresa de São Paulo que monta coberturas (tendas, lonas, estruturas de ferro, policarbonato). Você atende o WhatsApp da empresa.
+  return `Você é a *Suelen*, assistente do Rafael na *${c.nome}* (RL Coberturas e Decorações), empresa de São Paulo. Você atende o WhatsApp da empresa.
+
+O QUE A RL FAZ (catálogo)
+- LOCAÇÃO pra eventos: cobertura em *plástico cristal transparente* (proteção contra chuva, visual sofisticado); cobertura com *tecido pra quebra de sol* (reduz o calor, elegante, ideal pra eventos de dia); *piso nivelado* com acabamento em *carpete*, *deck* (tábuas envernizadas) ou *vidro temperado* (transforma a piscina em área útil do evento).
+- VENDA (cobertura fixa, sob medida): *plástico cristal transparente* (melhor custo-benefício), *lona vinílica translúcida* (protege sem perder luminosidade), *policarbonato* (alta resistência, desempenho térmico e proteção UV), *vidro laminado* (durável, isolamento acústico, proteção UV, máxima transparência) e *telha de zinco termoacústica* (com isopor, conforto térmico e acústico, pra áreas grandes).
+- Visita técnica *gratuita* na cidade de São Paulo (fora da capital, o Rafael confirma). Parcelamento em até *12x sem juros*.
 A maioria dos clientes quer ALUGAR cobertura pra um evento (aniversário, almoço, churrasco, casamento, festa de empresa), muitas vezes pra cobrir varanda, área da piscina, salão de festas ou quintal, ou por medo de chuva. Alguns querem COMPRAR uma cobertura fixa pra ficar no lugar.
 
 SEU TRABALHO É SÓ ESTE: entender o pedido, passar uma estimativa e pré-agendar a visita técnica. Quem fecha, negocia e confirma tudo é o Rafael.
@@ -123,14 +136,16 @@ ALUGUEL — o que precisa (pule o que já tem):
 1. tipo de evento e data  2. bairro/cidade
 3. tamanho da área (ex: 10x20 m ou "varanda de 14 m"). Se não souber, pergunte quantas pessoas e estime ${c.m2PorPessoa} m² por pessoa, arredondando pra cima. Se ele disser só um lado (ex: 14 m), pergunte a outra medida aproximada.
 4. se precisa de fechamento lateral (só se fizer sentido)
+Extras da locação: tecido de quebra de sol e piso nivelado (carpete, deck ou vidro sobre a piscina). Ofereça quando fizer sentido (evento de dia com sol forte → tecido; gramado/terreno irregular → piso; evento na área da piscina → piso de vidro). Esses extras não têm valor de tabela: anote no pedido (observações) e diga que o Rafael passa o valor depois da visita. Pode mandar foto com enviar_fotos.
 O valor depende da região (São Paulo capital/Grande SP ou interior/fora de SP) — a ferramenta calcula.
 
 COMPRA — o que precisa (pule o que já tem):
-1. material — 3 opções: *Policarbonato*, *Lona* e *Plástico*. Se o cliente não souber qual quer, explique rapidinho a diferença e ofereça mandar fotos de cada material pra ajudar a escolher (ferramenta enviar_fotos_materiais).
+1. material — policarbonato, lona, plástico cristal, vidro laminado ou telha de zinco. Se o cliente não souber qual quer, explique rapidinho a diferença e ofereça mandar fotos pra ajudar a escolher (ferramenta enviar_fotos). Vidro laminado e telha de zinco não têm valor de tabela: diga que o Rafael passa o valor depois da visita técnica.
 2. bairro/cidade e que lugar é  3. tamanho da área  4. pra quando precisa
 
 PREÇO
 - Use SEMPRE a ferramenta calcular_orcamento pra dar valor. Não faça conta de cabeça.
+- Se perguntarem de pagamento: parcelamento em até 12x sem juros; detalhes com o Rafael.
 - Passe SÓ o *valor final* da cobertura (ex: "10x10 fica em torno de R$ 12.000"). NUNCA fale o preço do metro quadrado, nem a conta "m² × preço".
 - Na compra, calcule só o material que o cliente escolheu. Só mande as 3 opções (policarbonato, lona e plástico, cada uma com o valor final) se o cliente PEDIR pra comparar.
 - Todo valor é *estimativa*: varia com a distância e com as medidas reais, e o *valor final oficial sai só depois da visita técnica*.
@@ -152,10 +167,10 @@ const tools = [
       modalidade: { type: "string", enum: ["aluguel", "compra"] },
       area_m2: { type: "number", description: "Área total em m²" },
       regiao: { type: "string", enum: ["sp", "interior"], description: "Só aluguel. sp = capital e Grande SP; interior = interior ou fora de SP" },
-      material: { type: "string", enum: ["policarbonato", "lona", "plastico"], description: "Só compra" } },
+      material: { type: "string", enum: ["policarbonato", "lona", "plastico", "vidro", "zinco"], description: "Só compra" } },
       required: ["modalidade", "area_m2"] } } },
-  { type: "function", function: { name: "enviar_fotos_materiais", description: "Manda pro cliente fotos de exemplo dos materiais (policarbonato, lona, plástico) pra ajudar a escolher. Use quando o cliente aceitar ver as fotos.",
-    parameters: { type: "object", properties: { materiais: { type: "array", items: { type: "string", enum: ["policarbonato", "lona", "plastico"] }, description: "quais mandar; vazio = os 3" } } } } },
+  { type: "function", function: { name: "enviar_fotos", description: "Manda pro cliente fotos do catálogo da RL (cada uma com foto real e descrição). Use quando o cliente quiser ver os materiais/opções. Mande no máximo 5.",
+    parameters: { type: "object", properties: { fotos: { type: "array", items: { type: "string", enum: Object.keys(FOTOS) }, description: "quais mandar" } }, required: ["fotos"] } } },
   { type: "function", function: { name: "passar_para_rafael", description: "Passa a conversa pro Rafael e você para de responder este cliente. Use quando for cliente antigo/assunto já em andamento com o Rafael, ou algo que não é orçamento novo.",
     parameters: { type: "object", properties: { nome: { type: "string" }, motivo: { type: "string", description: "resumo curto do que o cliente quer" } }, required: ["motivo"] } } },
   { type: "function", function: { name: "registrar_pedido", description: "Envia o pedido completo pro Rafael aprovar a visita. Chame uma única vez, quando já tiver nome, modalidade, endereço/local, tamanho e as opções de horário da visita.",
@@ -165,7 +180,7 @@ const tools = [
       data: { type: "string", description: "Aluguel: data do evento. Compra: pra quando precisa" },
       local: { type: "string", description: "endereço completo ou bairro/cidade" },
       tamanho: { type: "string", description: "medida ou área, ex: 10x20 m (200 m²)" }, area_m2: { type: "number" },
-      regiao: { type: "string", enum: ["sp", "interior"] }, material: { type: "string", enum: ["policarbonato", "lona", "plastico"] },
+      regiao: { type: "string", enum: ["sp", "interior"] }, material: { type: "string", enum: ["policarbonato", "lona", "plastico", "vidro", "zinco"] },
       fechamento_lateral: { type: "string" },
       visita: { type: "string", description: "opções de dia/período que o cliente pode, pro Rafael aprovar" },
       observacoes: { type: "string", description: "detalhes úteis: medo de chuva, varanda, piscina, salão de festas, fotos/vídeos enviados etc." } },
@@ -245,7 +260,9 @@ async function chat(req) {
         const mod = args.modalidade === "compra" ? "compra" : "aluguel";
         const a = Math.ceil(Number(args.area_m2) || 0), reg = args.regiao === "interior" ? "interior" : "sp";
         const p = precoM2(mod === "compra" ? "compra" : "locacao", reg, args.material);
-        if (!p) result = { erro: "Na compra, falta escolher o material: policarbonato, lona ou plástico." };
+        if (!p) result = mod === "compra" && NOME_MAT[args.material]
+          ? { sem_tabela: true, obs: `${NOME_MAT[args.material]} não tem valor de tabela: diga que o Rafael passa o valor depois da visita técnica (que é gratuita).` }
+          : { erro: "Na compra, falta escolher o material." };
         else {
           out.orcamento = { modalidade: mod, area: a, regiao: mod === "aluguel" ? reg : undefined, material: mod === "compra" ? args.material : undefined, precoM2: p, valor: a * p };
           result = { modalidade: mod, area_m2: a, ...(mod === "aluguel" ? { regiao: reg } : { material: NOME_MAT[args.material] }),
@@ -257,10 +274,10 @@ async function chat(req) {
         const p = precoM2(args.modalidade === "compra" ? "compra" : "locacao", args.regiao, args.material);
         if (a && p) { args.area = a; args.precoM2 = p; args.valor = a * p; }
         out.pedido = args; result = { ok: true };
-      } else if (tc.function.name === "enviar_fotos_materiais") {
-        const lista = (Array.isArray(args.materiais) && args.materiais.length ? args.materiais : ["policarbonato", "lona", "plastico"]).filter(m => FOTOS[m]);
-        if (!lista.length) result = { ok: false, obs: "As fotos ainda não estão disponíveis. Diga que vai pedir pro Rafael mandar fotos dos materiais e siga o atendimento." };
-        else { out.fotos = lista; result = { ok: true, obs: "As fotos vão logo depois da sua mensagem. Diga só algo curto tipo 'Vou te mandar as fotos de cada um 👇'." }; }
+      } else if (tc.function.name === "enviar_fotos") {
+        const lista = (Array.isArray(args.fotos) ? args.fotos : []).filter(m => FOTOS[m]).slice(0, 5);
+        out.fotos = [...new Set([...(out.fotos || []), ...lista])];
+        result = { ok: true, obs: "As fotos vão logo depois da sua mensagem. Escreva algo curto tipo 'Vou te mandar as fotos 👇' e siga o atendimento." };
       } else if (tc.function.name === "passar_para_rafael") {
         out.passar = args; result = { ok: true, obs: "Avise o cliente que o Rafael já foi avisado e responde por aqui. Depois disso você não fala mais com ele." };
       } else result = { erro: "ferramenta desconhecida" };
@@ -394,7 +411,7 @@ async function responder(phone) {
     const r = await chat({ messages: c.hist, imagens: b.imagens, temFoto: c.temFoto, jaRegistrado: !!c.pedidoId });
     c.hist.push({ role: "assistant", content: r.reply }); c.hist = c.hist.slice(-30);
     await zapiTexto(phone, r.reply);
-    for (const m of r.fotos || []) await zapi("send-image", { phone, image: FOTOS[m], caption: `*${NOME_MAT[m]}*` });
+    for (const f of r.fotos || []) await zapi("send-image", { phone, image: `${URL_PUBLICA}/fotos/${f}.jpg`, caption: `*${FOTOS[f]}*` });
     if (r.passar && !r.pedido) {
       c.status = "humano";
       console.log("Passou pro Rafael", phone);
@@ -468,6 +485,13 @@ http.createServer(async (req, res) => {
       receberWhatsApp(ev).catch(e => console.error(e));
     });
     return;
+  }
+  const foto = req.url.match(/^\/fotos\/([a-z-]+)\.jpg$/);
+  if (foto && FOTOS[foto[1]]) {
+    return fs.readFile(path.join(__dirname, foto[1] + ".jpg"), (err, data) => {
+      if (err) { res.statusCode = 404; return res.end(); }
+      res.setHeader("Content-Type", "image/jpeg"); res.setHeader("Cache-Control", "public, max-age=86400"); res.end(data);
+    });
   }
   if (req.url === "/health") return res.end(`ok · IA: ${KEY ? "ligada" : "desligada"} · WhatsApp: ${usaZapi() ? "Z-API ok" : "desligado"} · Rafael: ${RAFAEL ? "sim" : "não"} · memória: ${REDIS_URL ? "Key Value" : "temporária"}`);
   res.setHeader("Content-Type", "text/plain; charset=utf-8");
