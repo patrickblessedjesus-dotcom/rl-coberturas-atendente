@@ -61,6 +61,7 @@ const zapiTexto = (phone, message) => zapi("send-text", { phone, message, delayT
 
 // ---------- estado guardado (Render Key Value), com reserva em memória ----------
 const REDIS_URL = process.env.REDIS_URL || "";
+const P = "rl:" + (process.env.ESTADO_VERSAO || "1") + ":"; // trocar ESTADO_VERSAO zera conversas e pedidos
 const mem = new Map();
 let rsock = null, rbuf = Buffer.alloc(0), rfila = [];
 function respEncode(args) { return `*${args.length}\r\n` + args.map(a => { a = String(a); return `$${Buffer.byteLength(a)}\r\n${a}\r\n`; }).join(""); }
@@ -102,8 +103,8 @@ async function gravar(k, v) {
   if (REDIS_URL) { try { await redis("SET", k, JSON.stringify(v), "EX", DIAS30); } catch (e) { console.error("Key Value SET", e.message); } }
 }
 async function proximoPedido() {
-  if (REDIS_URL) { try { return await redis("INCR", "rl:seq"); } catch (e) { console.error("Key Value INCR", e.message); } }
-  const n = (mem.get("rl:seq") || 0) + 1; mem.set("rl:seq", n); return n;
+  if (REDIS_URL) { try { return await redis("INCR", P + "seq"); } catch (e) { console.error("Key Value INCR", e.message); } }
+  const n = (mem.get(P + "seq") || 0) + 1; mem.set(P + "seq", n); return n;
 }
 
 // ---------- IA ----------
@@ -291,8 +292,8 @@ async function chat(req) {
 // ---------- atendimento no WhatsApp ----------
 // status: "bot" (bot atende) · "aguardando" (pedido enviado, Rafael ainda não aprovou) · "remarcando" · "humano" (Rafael assumiu: bot fica quieto)
 const novaConversa = () => ({ hist: [], temFoto: false, status: "bot", pedidoId: null, visita: "" });
-const conversa = async phone => (await ler("rl:c:" + phone)) || novaConversa();
-const salvar = (phone, c) => gravar("rl:c:" + phone, c);
+const conversa = async phone => (await ler(P + "c:" + phone)) || novaConversa();
+const salvar = (phone, c) => gravar(P + "c:" + phone, c);
 
 const buffers = new Map(); // phone -> { partes, imagens, timer }
 const filas = new Map();   // phone -> Promise (uma resposta por vez)
@@ -369,8 +370,8 @@ async function comandoRafael(texto) {
     return zapiTexto(RAFAEL, "Comandos:\n✅ *ok 12* (ou *ok 12 sábado 10h*) → confirma a visita\n🔁 *outro 12 sexta 14h* → sugere outro horário\n🙋 *assumir 12* → Suelen para de responder o cliente\n🤖 *bot 12* → Suelen volta a atender o cliente");
   }
   const cmd = m[1].toLowerCase(), extra = (m[3] || "").trim();
-  const id = m[2] ? Number(m[2]) : await ler("rl:ultimo");
-  const phone = id ? await ler("rl:p:" + id) : null;
+  const id = m[2] ? Number(m[2]) : await ler(P + "ultimo");
+  const phone = id ? await ler(P + "p:" + id) : null;
   if (!phone) return zapiTexto(RAFAEL, `Não achei o pedido${id ? " #" + id : ""}. Manda com o número, ex: *ok 12*`);
   return naFila(phone, async () => {
     const c = await conversa(phone);
@@ -420,7 +421,7 @@ async function responder(phone) {
     if (r.pedido && !c.pedidoId) {
       const id = await proximoPedido();
       c.pedidoId = id; c.status = "aguardando"; c.visita = r.pedido.visita || ""; c.pedido = r.pedido;
-      await gravar("rl:p:" + id, phone); await gravar("rl:ultimo", id);
+      await gravar(P + "p:" + id, phone); await gravar(P + "ultimo", id);
       console.log("Pedido registrado #" + id, phone, r.pedido.modalidade);
       if (RAFAEL) await zapiTexto(RAFAEL, resumoPedido(r.pedido, phone, id));
     }
