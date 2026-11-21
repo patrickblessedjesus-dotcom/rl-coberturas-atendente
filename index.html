@@ -201,11 +201,11 @@ function orcHtml(){
 }
 async function handle(t){
   switch(step){
-    case "inicio": step="modo"; return bot([`Olá! 👋 Aqui é da *${S.nome}*.`,"Você quer *alugar* uma cobertura pra um evento ou *comprar* uma cobertura?"],["Alugar pra um evento","Comprar"]);
+    case "inicio": step="modo"; return bot([`Olá! 👋 Aqui é da *${S.nome}*.`,"É pra um *evento* (aluguel) ou uma *cobertura fixa* pra ficar no lugar (compra)?"],["Pra um evento","Cobertura fixa"]);
     case "modo":
-      if(/compr/i.test(t)){ lead.modalidade="compra"; step="material";
-        return bot(["Show! Trabalhamos com 3 materiais:\n• *Policarbonato*: "+brl(P.venda.policarbonato)+"/m²\n• *Lona*: "+brl(P.venda.lona)+"/m²\n• *Plástico*: "+brl(P.venda.plastico)+"/m²","Qual te interessa?"],["Policarbonato","Lona","Plástico"]); }
-      lead.modalidade="aluguel"; step="tipo"; return bot(["Show! É pra qual tipo de evento?"],["Casamento","Aniversário","Evento de empresa","Outro"]);
+      if(/compr|fix|definitiv/i.test(t)){ lead.modalidade="compra"; step="material";
+        return bot(["Fazemos sim! Pra cobertura fixa trabalhamos com 3 materiais:\n• *Policarbonato*: "+brl(P.venda.policarbonato)+"/m²\n• *Lona*: "+brl(P.venda.lona)+"/m²\n• *Plástico*: "+brl(P.venda.plastico)+"/m²","Qual te interessa?"],["Policarbonato","Lona","Plástico"]); }
+      lead.modalidade="aluguel"; step="tipo"; return bot(["Fazemos sim! É pra qual tipo de evento?"],["Casamento","Aniversário","Evento de empresa","Outro"]);
     case "material": lead.material=/poli/i.test(t)?"policarbonato":/lona/i.test(t)?"lona":/pl[aá]st/i.test(t)?"plastico":null;
       if(!lead.material) return bot(["Me fala qual dos 3: policarbonato, lona ou plástico?"],["Policarbonato","Lona","Plástico"]);
       step="uso"; return bot(["Boa! Vai ser instalada onde? Bairro, cidade e tipo de lugar (quintal, garagem, comércio…)."]);
@@ -221,7 +221,8 @@ async function handle(t){
       step="lateral"; return bot(["Vai precisar de fechamento lateral?"],["Sim","Não","Não sei"]); }
     case "lateral": lead.fechamento_lateral=t; lead.precoM2=lead.regiao==="interior"?P.locacao.interior:P.locacao.sp; lead.valor=lead.area*lead.precoM2; step="visita";
       return bot([{html:fmtQ(orcHtml()),cls:"quote"},"Quer marcar a visita técnica? Me passa 1 a 3 opções de dia e período que funcionam pra você."],proximosDias().map(d=>d+" manhã"));
-    case "visita": lead.visita=t; step="nome"; return bot(["Anotado! É um *pré-agendamento*: o Rafael confere a agenda dele e confirma o horário (ou sugere outro) por aqui. Qual o seu nome?"]);
+    case "visita": lead.visita=t; step="end"; return bot(["Anotado! É um *pré-agendamento*: o Rafael confere a agenda dele e confirma o horário (ou sugere outro) por aqui. Qual o endereço completo do local?"]);
+    case "end": lead.local=(lead.local?lead.local+" — ":"")+t; step="nome"; return bot(["E o seu nome?"]);
     case "nome": lead.nome=t; step="fim"; await bot([`Obrigado, ${t.split(" ")[0]}! Seu pedido já foi pro Rafael, ele te confirma o horário da visita por aqui 🙌`]); return enviarLead();
     default: return bot(["Seu pedido já está com o Rafael 😉"]);
   }
@@ -248,7 +249,7 @@ function confirmar(b){ const card=b.closest(".card"), tag=card.querySelectorAll(
 function outro(b){ const card=b.closest(".card"), tag=card.querySelectorAll(".tag")[1]; const h=prompt("Qual horário você sugere?"); if(!h) return; tag.textContent="🔁 Você sugeriu: "+h; }
 
 function restart(){
-  $("chat").innerHTML=""; lead={}; hist=[]; leadSent=false; step="inicio"; chips(["Quero alugar uma tenda pra 100 pessoas","Quero comprar uma cobertura de policarbonato"]);
+  $("chat").innerHTML=""; lead={}; hist=[]; leadSent=false; step="inicio"; chips(["Quero alugar uma tenda pra 100 pessoas","Me passaram seu contato, vou fazer um almoço dia 6/12 em Moema","Quero uma cobertura fixa pra minha área de lazer"]);
   bubble("bot","💡 <i>Demo: você é o cliente. Escreve do seu jeito, como se fosse no WhatsApp.</i>");
 }
 function view(v){ document.body.dataset.v=v; $("tCli").classList.toggle("on",v==="cliente"); $("tDono").classList.toggle("on",v==="dono"); if(v==="dono") $("dot").style.display="none"; }
