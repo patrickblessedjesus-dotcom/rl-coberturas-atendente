@@ -57,6 +57,28 @@ async function zapi(rota, corpo) {
     try { const j = JSON.parse(t); for (const k of ["messageId", "zaapId", "id"]) if (j[k]) enviadosPeloBot.add(String(j[k])); return j; } catch { return {}; }
   } catch (e) { console.error("Z-API erro", rota, e.message || e); return null; }
 }
+async function zapiGet(rota) {
+  const headers = {}; if (ZAPI.client) headers["Client-Token"] = ZAPI.client;
+  try {
+    const r = await fetch(`https://api.z-api.io/instances/${encodeURIComponent(ZAPI.id)}/token/${encodeURIComponent(ZAPI.token)}/${rota}`, { headers, signal: AbortSignal.timeout(15000) });
+    const t = await r.text();
+    if (!r.ok) { console.error("Z-API GET recusou", rota.split("?")[0], r.status, t.slice(0, 200)); return null; }
+    return JSON.parse(t);
+  } catch (e) { console.error("Z-API GET erro", e.message || e); return null; }
+}
+const DIAS_HUMANO = Number(process.env.DIAS_HUMANO || 30); // se o Rafael respondeu o cliente nesse período, a Suelen não entra
+// olha o histórico do WhatsApp: o Rafael já respondeu esse cliente? e o que já foi conversado?
+async function historicoWhatsApp(phone, c) {
+  const lista = await zapiGet(`chat-messages/${phone}?amount=40`);
+  if (!Array.isArray(lista)) return null;
+  const msgs = lista.filter(m => m && m.messageId).sort((a, b) => Number(a.momment || 0) - Number(b.momment || 0));
+  const doBot = new Set([...(c.botIds || []), ...enviadosPeloBot]);
+  const limite = Date.now() - DIAS_HUMANO * 24 * 3600 * 1000;
+  const humano = msgs.find(m => m.fromMe && !doBot.has(String(m.messageId)) && !m.fromApi && Number(m.momment || 0) >= limite);
+  const texto = m => m.text?.message || (m.image ? "[foto]" + (m.image.caption ? " " + m.image.caption : "") : m.audio ? "[áudio]" : m.video ? "[vídeo]" : m.document ? "[arquivo]" : "");
+  const antes = msgs.filter(m => !doBot.has(String(m.messageId))).slice(-20).map(m => `${m.fromMe ? "Rafael" : "Cliente"}: ${texto(m)}`).filter(l => !l.endsWith(": "));
+  return { rafaelRespondeu: !!humano, contexto: antes.join("\n") };
+}
 const zapiTexto = (phone, message) => zapi("send-text", { phone, message, delayTyping: Math.min(4, 1 + Math.floor(message.length / 120)) });
 
 // ---------- estado guardado (Render Key Value), com reserva em memória ----------
@@ -237,6 +259,7 @@ async function chat(req) {
     .filter(m => m && (m.role === "user" || m.role === "assistant"))
     .map(m => ({ role: m.role, content: String(m.content).slice(0, 2500) }));
   const extras = [];
+  if (req.contexto) extras.push({ role: "system", content: "Mensagens anteriores deste cliente no WhatsApp (antes de você entrar). Use pra NÃO perguntar de novo o que já foi dito ou respondido:\n" + String(req.contexto).slice(0, 3000) });
   if (req.temFoto) extras.push({ role: "system", content: "Obs: o cliente já mandou foto/vídeo do local." });
   if (req.jaRegistrado) extras.push({ role: "system", content: "O pedido deste cliente JÁ foi enviado ao Rafael e está aguardando ele confirmar o horário da visita. Não chame registrar_pedido de novo. Responda dúvidas simples e diga que o Rafael confirma em breve; se o cliente mudar alguma informação importante, diga que vai avisar o Rafael." });
 
@@ -383,14 +406,14 @@ async function comandoRafael(texto) {
     if (/^(ok|okay|sim|aprov|confirm)/.test(cmd)) {
       const h = await entenderHorario(extra || c.visita);
       if (!h) return zapiTexto(RAFAEL, `O cliente deu estas opções: *${c.visita || "-"}*.\nQual horário fica? Manda assim: *ok ${id} sábado 10h*`);
-      await zapiTexto(phone, `✅ Visita técnica confirmada: *${h.texto}*.\nA partir de agora o Rafael segue com você por aqui. Obrigado!`);
+      await enviarCliente(phone, c, `✅ Visita técnica confirmada: *${h.texto}*.\nA partir de agora o Rafael segue com você por aqui. Obrigado!`);
       c.status = "humano"; c.visitaConfirmada = h.inicio; await salvar(phone, c);
       await zapiTexto(RAFAEL, `Feito! Pedido #${id} confirmado pra *${h.texto}* e avisei o cliente. Daqui pra frente a Suelen não responde mais ele — é com você 👊`);
       return agendar(c, phone, id, h);
     }
     if (/^(outro|remarcar)/.test(cmd)) {
       if (!extra) return zapiTexto(RAFAEL, `Me fala o horário, ex: *outro ${id} sexta 14h*`);
-      await zapiTexto(phone, `O Rafael conferiu a agenda e não consegue nesse horário 😕 Ele sugeriu *${extra}*. Pode ser pra você?`);
+      await enviarCliente(phone, c, `O Rafael conferiu a agenda e não consegue nesse horário 😕 Ele sugeriu *${extra}*. Pode ser pra você?`);
       c.status = "remarcando"; c.visita = extra; c.hist.push({ role: "assistant", content: `O Rafael sugeriu ${extra} pra visita. Pode ser?` }); await salvar(phone, c);
       return zapiTexto(RAFAEL, `Mandei pro cliente a sugestão: ${extra}. Quando ele responder eu te passo aqui.`);
     }
@@ -400,16 +423,31 @@ async function comandoRafael(texto) {
   });
 }
 
+async function enviarCliente(phone, c, msg) {
+  const r = await zapiTexto(phone, msg);
+  const id = r && (r.messageId || r.id || r.zaapId);
+  if (id) c.botIds = [...(c.botIds || []), String(id), ...(r.zaapId && r.messageId ? [String(r.zaapId)] : [])].slice(-80);
+  return r;
+}
+
 async function responder(phone) {
   const b = buffers.get(phone); buffers.delete(phone);
   if (!b || !b.partes.length) return;
   const c = await conversa(phone);
   if (c.status === "humano") return;
   const texto = b.partes.join("\n");
+  // antes de responder: o Rafael já está atendendo esse cliente?
+  const h = await historicoWhatsApp(phone, c);
+  if (h && h.rafaelRespondeu) {
+    c.status = "humano"; await salvar(phone, c);
+    console.log("Rafael já atende esse cliente, Suelen fica quieta", phone);
+    return;
+  }
+  if (h && h.contexto && !c.hist.length) c.contexto = h.contexto.slice(-3000);
   if (c.status === "remarcando") {
     c.hist.push({ role: "user", content: texto }); c.status = "aguardando"; await salvar(phone, c);
     if (RAFAEL) await zapiTexto(RAFAEL, `💬 Cliente do pedido #${c.pedidoId} respondeu sobre o horário:\n"${texto.slice(0, 500)}"\n\nSe estiver ok: *ok ${c.pedidoId} ${c.visita}*`);
-    return zapiTexto(phone, "Show, já passei pro Rafael! Ele te confirma por aqui 👍");
+    await enviarCliente(phone, c, "Show, já passei pro Rafael! Ele te confirma por aqui 👍"); return salvar(phone, c);
   }
   if (!c.hist.length && !c.avisado && RAFAEL) {
     c.avisado = true;
@@ -419,10 +457,10 @@ async function responder(phone) {
   c.hist.push({ role: "user", content: texto.slice(0, 2500) });
   if (b.temMidia) c.temFoto = true;
   try {
-    const r = await chat({ messages: c.hist, imagens: b.imagens, temFoto: c.temFoto, jaRegistrado: !!c.pedidoId });
+    const r = await chat({ messages: c.hist, imagens: b.imagens, temFoto: c.temFoto, jaRegistrado: !!c.pedidoId, contexto: c.contexto });
     c.hist.push({ role: "assistant", content: r.reply }); c.hist = c.hist.slice(-30);
-    await zapiTexto(phone, r.reply);
-    for (const f of r.fotos || []) await zapi("send-image", { phone, image: `${URL_PUBLICA}/fotos/${f}.jpg`, caption: `*${FOTOS[f]}*` });
+    await enviarCliente(phone, c, r.reply);
+    for (const f of r.fotos || []) { const x = await zapi("send-image", { phone, image: `${URL_PUBLICA}/fotos/${f}.jpg`, caption: `*${FOTOS[f]}*` }); if (x && (x.messageId || x.id)) c.botIds = [...(c.botIds || []), String(x.messageId || x.id)].slice(-80); }
     if (r.passar && !r.pedido) {
       c.status = "humano";
       console.log("Passou pro Rafael", phone);
@@ -439,7 +477,7 @@ async function responder(phone) {
   } catch (e) {
     console.error("Erro no atendimento", e.message || e);
     c.hist.pop(); await salvar(phone, c);
-    await zapiTexto(phone, "Opa, deu uma instabilidade aqui. Pode mandar de novo?");
+    await enviarCliente(phone, c, "Opa, deu uma instabilidade aqui. Pode mandar de novo?"); await salvar(phone, c);
   }
 }
 
@@ -457,6 +495,8 @@ async function receberWhatsApp(ev) {
     if (enviadosPeloBot.has(String(ev.messageId)) || ev.fromApi) return;
     if (phone === RAFAEL) return;
     const c = await conversa(phone);
+    if ((c.botIds || []).includes(String(ev.messageId))) return;
+    const pend = buffers.get(phone); if (pend) { clearTimeout(pend.timer); buffers.delete(phone); }
     if (c.status !== "humano") { c.status = "humano"; await salvar(phone, c); console.log("Rafael assumiu a conversa", phone); }
     return;
   }
