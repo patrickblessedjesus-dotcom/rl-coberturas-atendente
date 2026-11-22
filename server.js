@@ -6,6 +6,7 @@ const fs = require("fs");
 const path = require("path");
 
 const PORT = process.env.PORT || 3000;
+const EMPRESA = (process.env.NOME_EMPRESA || "RL Coberturas").trim(); // ex: "Grupo RL" no segundo número
 const KEY = process.env.OPENAI_API_KEY || "";
 const MODELS = (process.env.OPENAI_MODEL || "gpt-5-mini,gpt-4o-mini").split(",").map(s => s.trim()).filter(Boolean);
 
@@ -133,7 +134,7 @@ async function proximoPedido() {
 
 function instrucoes(c) {
   const hoje = new Date().toLocaleDateString("pt-BR", { timeZone: "America/Sao_Paulo", weekday: "long", day: "2-digit", month: "long", year: "numeric" });
-  return `Você é a *Suelen*, assistente do Rafael na *${c.nome}* (RL Coberturas e Decorações), empresa de São Paulo. Você atende o WhatsApp da empresa.
+  return `Você é a *Suelen*, assistente do Rafael na *${c.nome}*${/cobertura/i.test(c.nome) ? " (RL Coberturas e Decorações)" : " (do grupo da RL Coberturas e Decorações)"}, empresa de São Paulo. Você atende o WhatsApp da empresa.
 
 O QUE A RL FAZ (catálogo)
 - LOCAÇÃO pra eventos: cobertura em *plástico cristal transparente* (proteção contra chuva, visual sofisticado); cobertura com *tecido pra quebra de sol* (reduz o calor, elegante, ideal pra eventos de dia); *piso nivelado* com acabamento em *carpete*, *deck* (tábuas envernizadas) ou *vidro temperado* (transforma a piscina em área útil do evento).
@@ -251,7 +252,7 @@ async function transcrever(url) {
 
 async function chat(req) {
   const c = {
-    nome: String(req.config?.nome || "RL Coberturas").slice(0, 60),
+    nome: String(req.config?.nome || EMPRESA).slice(0, 60),
     m2PorPessoa: Number(req.config?.m2PorPessoa) > 0 ? Number(req.config.m2PorPessoa) : 1.5,
     horarios: String(req.config?.horarios || "segunda a sábado, das 8h às 17h").slice(0, 120),
   };
@@ -331,7 +332,7 @@ function naFila(phone, fn) { const p = (filas.get(phone) || Promise.resolve()).t
 
 function resumoPedido(p, phone, id) {
   const compra = p.modalidade === "compra";
-  const l = [`🆕 *Pedido #${id} — ${compra ? "🛒 COMPRA" : "📅 ALUGUEL"}*`, ""];
+  const l = [`🆕 *${EMPRESA} · Pedido #${id} — ${compra ? "🛒 COMPRA" : "📅 ALUGUEL"}*`, ""];
   const add = (k, v) => { if (v) l.push(`*${k}:* ${v}`); };
   add("Cliente", p.nome); add("WhatsApp", "+" + phone);
   add(compra ? "Uso" : "Evento", p.evento); add(compra ? "Prazo" : "Data", p.data); add("Local", p.local);
@@ -452,7 +453,7 @@ async function responder(phone) {
   if (!c.hist.length && !c.avisado && RAFAEL) {
     c.avisado = true;
     const prev = texto.length > 300 ? texto.slice(0, 300) + "…" : texto;
-    await zapiTexto(RAFAEL, `👀 *Novo atendimento da Suelen*\n\n*Contato:* ${b.nome ? b.nome + " " : ""}(+${phone})\n*Mensagem:* ${prev}\n\nhttps://wa.me/${phone}\n_Se quiser assumir, é só responder o cliente pelo número da empresa que a Suelen para._`);
+    await zapiTexto(RAFAEL, `👀 *Novo atendimento da Suelen · ${EMPRESA}*\n\n*Contato:* ${b.nome ? b.nome + " " : ""}(+${phone})\n*Mensagem:* ${prev}\n\nhttps://wa.me/${phone}\n_Se quiser assumir, é só responder o cliente pelo número da empresa que a Suelen para._`);
   }
   c.hist.push({ role: "user", content: texto.slice(0, 2500) });
   if (b.temMidia) c.temFoto = true;
@@ -464,7 +465,7 @@ async function responder(phone) {
     if (r.passar && !r.pedido) {
       c.status = "humano";
       console.log("Passou pro Rafael", phone);
-      if (RAFAEL) await zapiTexto(RAFAEL, `📲 *Cliente pra você responder*\n\n*Contato:* ${r.passar.nome || "-"} (+${phone})\n*Assunto:* ${r.passar.motivo || "-"}\n\nA Suelen parou nesse cliente. Responde direto pelo número da empresa.`);
+      if (RAFAEL) await zapiTexto(RAFAEL, `📲 *Cliente pra você responder · ${EMPRESA}*\n\n*Contato:* ${r.passar.nome || "-"} (+${phone})\n*Assunto:* ${r.passar.motivo || "-"}\n\nA Suelen parou nesse cliente. Responde direto pelo número da empresa.`);
     }
     if (r.pedido && !c.pedidoId) {
       const id = await proximoPedido();
@@ -547,5 +548,5 @@ http.createServer(async (req, res) => {
   }
   if (req.url === "/health") return res.end(`ok · IA: ${KEY ? "ligada" : "desligada"} · WhatsApp: ${usaZapi() ? "Z-API ok" : "desligado"} · Rafael: ${RAFAEL ? "sim" : "não"} · memória: ${REDIS_URL ? "Key Value" : "temporária"}`);
   res.setHeader("Content-Type", "text/plain; charset=utf-8");
-  res.end("RL Coberturas · atendimento pelo WhatsApp");
-}).listen(PORT, () => console.log(`RL Coberturas no ar na porta ${PORT} · IA: ${KEY ? "ligada" : "DESLIGADA (falta OPENAI_API_KEY)"} · WhatsApp: ${usaZapi() ? "Z-API ok" : "desligado"} · memória: ${REDIS_URL ? "Key Value" : "temporária"}`));
+  res.end(EMPRESA + " · atendimento pelo WhatsApp");
+}).listen(PORT, () => console.log(`${EMPRESA} no ar na porta ${PORT} · IA: ${KEY ? "ligada" : "DESLIGADA (falta OPENAI_API_KEY)"} · WhatsApp: ${usaZapi() ? "Z-API ok" : "desligado"} · memória: ${REDIS_URL ? "Key Value" : "temporária"}`));
