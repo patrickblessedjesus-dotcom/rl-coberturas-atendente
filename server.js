@@ -496,12 +496,23 @@ async function responder(phone) {
   }
 }
 
+// o WhatsApp às vezes identifica a conversa por um código "@lid" em vez do número.
+// Guardamos qual número é cada código, pra reconhecer quando o Rafael responde.
+const lidsDoEvento = ev => { const a = new Set(); for (const v of Object.values(ev || {})) if (typeof v === "string" && /^\d{6,}@lid$/.test(v)) a.add(v.replace(/\D/g, "")); return [...a]; };
+
 async function receberWhatsApp(ev) {
-  const phone = String(ev.phone || "").replace(/\D/g, "");
+  let phone = String(ev.phone || "").replace(/\D/g, "");
+  const ehLid = String(ev.phone || "").includes("@lid");
+  if (!ev.fromMe && !ehLid && phone && !ev.isGroup) for (const l of lidsDoEvento(ev)) gravar(P + "lid:" + l, phone);
+  if (ev.fromMe && ehLid) {
+    const real = await ler(P + "lid:" + phone);
+    if (real) phone = String(real);
+    else console.log("Saiu do número da empresa pra um código @lid sem número conhecido", phone, "campos:", Object.keys(ev).join(","));
+  }
   if (ev.fromMe) console.log("Saiu do número da empresa", phone, "tipo:", ev.type || "-", ev.fromApi ? "(api)" : "");
   if (ev.type && ev.type !== "ReceivedCallback") return;
   if (CLIENTES_RAFAEL.has(phone)) return;
-  if (!phone || ev.isGroup || ev.isNewsletter || ev.broadcast || String(ev.phone).includes("@")) return;
+  if (!phone || ev.isGroup || ev.isNewsletter || ev.broadcast || (String(ev.phone).includes("@") && !(ev.fromMe && ehLid))) return;
   if (ev.messageId) { if (vistos.has(ev.messageId)) return; vistos.add(ev.messageId); }
   const quando = Number(ev.momment || ev.moment || 0);
   if (quando && (quando < ATIVO_DESDE || Date.now() - quando > 5 * 60 * 1000)) return; // mensagem antiga: não responde
