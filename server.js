@@ -44,6 +44,7 @@ const ZAPI = {
 const RAFAEL = (process.env.RAFAEL_WHATSAPP || "").replace(/\D/g, ""); // número pessoal do Rafael: recebe os pedidos e aprova
 const ESPERA_MS = Number(process.env.ESPERA_SEGUNDOS || 10) * 1000;   // junta mensagens seguidas do cliente antes de responder
 const usaZapi = () => !!(ZAPI.id && ZAPI.token);
+const CLIENTES_RAFAEL = new Set((process.env.CLIENTES_RAFAEL || "").split(/[,;\s]+/).map(x => x.replace(/\D/g, "")).filter(Boolean)); // a Suelen nunca responde esses números
 const ATIVO_DESDE = Date.parse(process.env.ATIVO_DESDE || "") || 0; // só responde mensagens que chegarem depois disso
 const enviadosPeloBot = new Set(); // ids das mensagens que o próprio bot mandou (pra não confundir com o Rafael digitando)
 
@@ -187,6 +188,11 @@ VISITA TÉCNICA (gratuita)
 - NUNCA confirme o horário como certo: é um *pré-agendamento*, o Rafael confere a agenda e confirma por aqui.
 - Quando tiver tudo, chame registrar_pedido UMA vez e diga que já passou pro Rafael, que vai confirmar o horário da visita por aqui.
 
+NOME DO CLIENTE (muito importante)
+- Chame o cliente só pelo nome que ELE disser que é dele ("meu nome é…", "aqui é a…", "sou o…") ou pelo nome do perfil do WhatsApp, se vier abaixo.
+- NUNCA chame o cliente por um nome que ele usa pra falar COM a empresa. Clientes antigos às vezes chamam a empresa de *Darcy* (antigo dono da RL, já falecido) ou de *Rafael*. "Oi Darcy", "Bom dia seu Darcy", "Rafael, tudo bem?" = o cliente está chamando a EMPRESA, não dizendo o nome dele. Nunca chame cliente de Darcy nem de Rafael.
+- Na dúvida sobre o nome, não use nome nenhum.
+
 Se o cliente fugir do assunto, responda com educação e traga de volta. Hoje é ${hoje}.`;
 }
 
@@ -261,6 +267,7 @@ async function chat(req) {
     .map(m => ({ role: m.role, content: String(m.content).slice(0, 2500) }));
   const extras = [];
   if (req.contexto) extras.push({ role: "system", content: "Mensagens anteriores deste cliente no WhatsApp (antes de você entrar). Use pra NÃO perguntar de novo o que já foi dito ou respondido:\n" + String(req.contexto).slice(0, 3000) });
+  if (req.perfil && !/darcy|rafael|suelen/i.test(req.perfil)) extras.push({ role: "system", content: "Nome do perfil do cliente no WhatsApp: " + String(req.perfil).slice(0, 60) });
   if (req.temFoto) extras.push({ role: "system", content: "Obs: o cliente já mandou foto/vídeo do local." });
   if (req.jaRegistrado) extras.push({ role: "system", content: "O pedido deste cliente JÁ foi enviado ao Rafael e está aguardando ele confirmar o horário da visita. Não chame registrar_pedido de novo. Responda dúvidas simples e diga que o Rafael confirma em breve; se o cliente mudar alguma informação importante, diga que vai avisar o Rafael." });
 
@@ -438,7 +445,7 @@ async function responder(phone) {
   if (c.status === "humano") return;
   const texto = b.partes.join("\n");
   // antes de responder: o Rafael já está atendendo esse cliente?
-  const h = await historicoWhatsApp(phone, c);
+  const h = process.env.USAR_HISTORICO === "1" ? await historicoWhatsApp(phone, c) : null;
   if (h && h.rafaelRespondeu) {
     c.status = "humano"; await salvar(phone, c);
     console.log("Rafael já atende esse cliente, Suelen fica quieta", phone);
@@ -450,6 +457,13 @@ async function responder(phone) {
     if (RAFAEL) await zapiTexto(RAFAEL, `💬 Cliente do pedido #${c.pedidoId} respondeu sobre o horário:\n"${texto.slice(0, 500)}"\n\nSe estiver ok: *ok ${c.pedidoId} ${c.visita}*`);
     await enviarCliente(phone, c, "Show, já passei pro Rafael! Ele te confirma por aqui 👍"); return salvar(phone, c);
   }
+  if (c.status === "aguardando") {
+    c.status = "humano"; await salvar(phone, c);
+    console.log("Cliente com pedido voltou a falar, passou pro Rafael", phone);
+    if (RAFAEL) await zapiTexto(RAFAEL, `💬 *${EMPRESA} · Cliente do pedido #${c.pedidoId}${c.pedido?.nome ? " (" + c.pedido.nome + ")" : ""}* mandou mensagem:\n"${texto.slice(0, 500)}"\n\nhttps://wa.me/${phone}\n_A Suelen não responde mais esse cliente. É com você._`);
+    return;
+  }
+  if (!c.perfil && b.nome) c.perfil = b.nome;
   if (!c.hist.length && !c.avisado && RAFAEL) {
     c.avisado = true;
     const prev = texto.length > 300 ? texto.slice(0, 300) + "…" : texto;
@@ -458,7 +472,7 @@ async function responder(phone) {
   c.hist.push({ role: "user", content: texto.slice(0, 2500) });
   if (b.temMidia) c.temFoto = true;
   try {
-    const r = await chat({ messages: c.hist, imagens: b.imagens, temFoto: c.temFoto, jaRegistrado: !!c.pedidoId, contexto: c.contexto });
+    const r = await chat({ messages: c.hist, imagens: b.imagens, temFoto: c.temFoto, jaRegistrado: !!c.pedidoId, contexto: c.contexto, perfil: c.perfil });
     c.hist.push({ role: "assistant", content: r.reply }); c.hist = c.hist.slice(-30);
     await enviarCliente(phone, c, r.reply);
     for (const f of r.fotos || []) { const x = await zapi("send-image", { phone, image: `${URL_PUBLICA}/fotos/${f}.jpg`, caption: `*${FOTOS[f]}*` }); if (x && (x.messageId || x.id)) c.botIds = [...(c.botIds || []), String(x.messageId || x.id)].slice(-80); }
@@ -483,8 +497,10 @@ async function responder(phone) {
 }
 
 async function receberWhatsApp(ev) {
-  if (ev.type && ev.type !== "ReceivedCallback") return;
   const phone = String(ev.phone || "").replace(/\D/g, "");
+  if (ev.fromMe) console.log("Saiu do número da empresa", phone, "tipo:", ev.type || "-", ev.fromApi ? "(api)" : "");
+  if (ev.type && ev.type !== "ReceivedCallback") return;
+  if (CLIENTES_RAFAEL.has(phone)) return;
   if (!phone || ev.isGroup || ev.isNewsletter || ev.broadcast || String(ev.phone).includes("@")) return;
   if (ev.messageId) { if (vistos.has(ev.messageId)) return; vistos.add(ev.messageId); }
   const quando = Number(ev.momment || ev.moment || 0);
