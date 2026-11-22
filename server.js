@@ -226,7 +226,8 @@ async function openai(body) {
   let lastErr;
   for (const model of MODELS) {
     const b = { ...body, model };
-    if (/^gpt-5\.\d/.test(model)) b.reasoning_effort = "none";
+    if (/^gpt-6/.test(model)) b.reasoning_effort = "low"; // resposta rápida no WhatsApp
+    else if (/^gpt-5\.\d/.test(model)) b.reasoning_effort = "none";
     else if (/^(gpt-5|o\d)/.test(model)) b.reasoning_effort = "low";
     const r = await fetch("https://api.openai.com/v1/chat/completions", {
       method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${KEY}` }, body: JSON.stringify(b)
@@ -577,3 +578,16 @@ http.createServer(async (req, res) => {
   res.setHeader("Content-Type", "text/plain; charset=utf-8");
   res.end(EMPRESA + " · atendimento pelo WhatsApp");
 }).listen(PORT, () => console.log(`${EMPRESA} no ar na porta ${PORT} · IA: ${KEY ? "ligada" : "DESLIGADA (falta OPENAI_API_KEY)"} · WhatsApp: ${usaZapi() ? "Z-API ok" : "desligado"} · memória: ${REDIS_URL ? "Key Value" : "temporária"}`));
+
+// teste da IA ao ligar: confere se o primeiro modelo da lista responde com a chave
+if (KEY) setTimeout(async () => {
+  const t0 = Date.now();
+  try {
+    const b = { model: MODELS[0], messages: [{ role: "user", content: "Responda só: ok" }] };
+    if (/^gpt-6/.test(MODELS[0])) b.reasoning_effort = "low";
+    const r = await fetch("https://api.openai.com/v1/chat/completions", { method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${KEY}` }, body: JSON.stringify(b) });
+    const j = await r.json().catch(() => ({}));
+    if (r.ok) console.log(`Teste da IA: ${MODELS[0]} ok em ${((Date.now() - t0) / 1000).toFixed(1)}s`);
+    else console.error(`Teste da IA: ${MODELS[0]} FALHOU ${r.status} ${j.error && j.error.message} — vai usar o reserva: ${MODELS.slice(1).join(", ") || "nenhum"}`);
+  } catch (e) { console.error("Teste da IA erro", e.message || e); }
+}, 2000);
