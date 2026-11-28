@@ -226,7 +226,7 @@ async function openai(body) {
   let lastErr;
   for (const model of MODELS) {
     const b = { ...body, model };
-    if (/^gpt-6/.test(model)) b.reasoning_effort = "low"; // resposta rápida no WhatsApp
+    if (/^gpt-6/.test(model)) b.reasoning_effort = body.tools ? "none" : "low"; // gpt-6 com tools no chat/completions só aceita "none"
     else if (/^gpt-5\.\d/.test(model)) b.reasoning_effort = "none";
     else if (/^(gpt-5|o\d)/.test(model)) b.reasoning_effort = "low";
     const r = await fetch("https://api.openai.com/v1/chat/completions", {
