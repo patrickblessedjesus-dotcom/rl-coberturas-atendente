@@ -498,8 +498,8 @@ async function responder(phone) {
   const texto = b.partes.join("\n");
   if (!c.perfil && b.nome) c.perfil = b.nome;
   // Rafael está atendendo: a Suelen não responde, só avisa e cobra se ele demorar
-  if (c.status === "humano" || CLIENTES_RAFAEL.has(phone)) {
-    await avisarRafael(phone, c, b, texto, "🙋 _Você está atendendo esse cliente, a Suelen não responde._");
+  if (c.status === "humano" || c.status === "duvida" || CLIENTES_RAFAEL.has(phone)) {
+    await avisarRafael(phone, c, b, texto, c.status === "duvida" ? `⏸️ _Conversa pausada: você respondeu alguém que eu não identifiquei. Se esse cliente não é com você, manda *seguir ${phone.replace(/^55/, "")}*._` : "🙋 _Você está atendendo esse cliente, a Suelen não responde._");
     await salvar(phone, c);
     return marcarPendente("c:" + phone, { phone, nome: (c.pedido && c.pedido.nome) || c.perfil || "", texto: texto.slice(0, 200) });
   }
@@ -549,16 +549,67 @@ async function responder(phone) {
 
 // o WhatsApp às vezes identifica a conversa por um código "@lid" em vez do número.
 // Guardamos qual número é cada código, pra reconhecer quando o Rafael responde.
+// ---------- quando o WhatsApp esconde o número (@lid) ----------
+// Guarda nome/foto de quem escreveu nos últimos dias. Se o dono responder um código @lid desconhecido,
+// tenta achar a pessoa pelo nome/foto; se não der pra ter certeza, PAUSA as conversas recentes (na dúvida, fica quieta).
+const normNome = s => String(s || "").normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+async function lembrarContato(phone, ev) {
+  const r = (await ler(P + "recentes")) || {};
+  r[phone] = { nome: normNome(ev.chatName || ev.senderName), foto: String(ev.photo || ev.senderPhoto || ""), quando: Date.now() };
+  const lim = Date.now() - 3 * 24 * 3600 * 1000;
+  await gravar(P + "recentes", Object.fromEntries(Object.entries(r).filter(([, v]) => v.quando > lim).sort((a, b) => b[1].quando - a[1].quando).slice(0, 200)));
+}
+async function acharPeloLid(lid, ev) {
+  const r = (await ler(P + "recentes")) || {};
+  const nome = normNome(ev.chatName), foto = String(ev.photo || "");
+  const porNome = nome ? Object.keys(r).filter(p => r[p].nome && r[p].nome === nome) : [];
+  const porFoto = foto ? Object.keys(r).filter(p => r[p].foto && r[p].foto === foto) : [];
+  const unico = porNome.length === 1 ? porNome[0] : porFoto.length === 1 ? porFoto[0] : null;
+  if (unico) { await gravar(P + "lid:" + lid, unico); console.log("Código @lid reconhecido pelo nome/foto", lid, unico); return { phone: unico }; }
+  return { candidatos: porNome.length ? porNome : Object.keys(r).filter(p => Date.now() - r[p].quando < 3 * 3600 * 1000) };
+}
+async function pausarNaDuvida(lid, ev, candidatos) {
+  const pausados = [];
+  for (const p of candidatos) {
+    const c = await conversa(p);
+    if (!LID_ATIVOS.includes(c.status)) continue;
+    c.statusAntes = c.status; c.status = "duvida"; await salvar(p, c);
+    pausados.push(p);
+  }
+  console.log("Dono respondeu um @lid desconhecido", lid, "· pausadas:", pausados.join(",") || "nenhuma");
+  if (!pausados.length) return;
+  const lista = [];
+  for (const p of pausados) { const c = await conversa(p); lista.push(`• ${c.perfil || (c.pedido && c.pedido.nome) || "sem nome"} (+${p})`); }
+  await LID_AVISAR(`⚠️ *${LID_QUEM}* · Você respondeu alguém que o WhatsApp não me mostrou o número${ev.chatName ? ` (aparece como *${String(ev.chatName).slice(0, 40)}*)` : ""}.\n\nPra não falar por cima de você, pausei:\n${lista.join("\n")}\n\nSe alguma dessas NÃO é com você, manda *seguir* + o número, ex.: *seguir ${pausados[0].replace(/^55/, "")}*`);
+}
+async function seguir(texto) {
+  let n = texto.replace(/\D/g, ""); if (n.length === 10 || n.length === 11) n = "55" + n;
+  if (!n) return LID_AVISAR("Manda *seguir* + o número, ex.: *seguir 11999999999*");
+  const c = await conversa(n);
+  if (c.status !== "duvida") return LID_AVISAR(`Não tem conversa pausada com +${n}.`);
+  c.status = c.statusAntes || LID_PADRAO; delete c.statusAntes; await salvar(n, c);
+  console.log("Voltou a atender", n);
+  return LID_AVISAR(`✅ Voltei a atender +${n}.`);
+}
+
+const LID_ATIVOS = ["bot", "aguardando", "remarcando"], LID_PADRAO = "bot", LID_QUEM = "Suelen · " + EMPRESA;
+const LID_AVISAR = msg => RAFAEL ? zapiTexto(RAFAEL, msg) : null;
 const lidsDoEvento = ev => { const a = new Set(); for (const v of Object.values(ev || {})) if (typeof v === "string" && /^\d{6,}@lid$/.test(v)) a.add(v.replace(/\D/g, "")); return [...a]; };
 
 async function receberWhatsApp(ev) {
   let phone = String(ev.phone || "").replace(/\D/g, "");
   const ehLid = String(ev.phone || "").includes("@lid");
-  if (!ev.fromMe && !ehLid && phone && !ev.isGroup) for (const l of lidsDoEvento(ev)) gravar(P + "lid:" + l, phone);
-  if (ev.fromMe && ehLid) {
+  if (!ev.fromMe && !ehLid && phone && !ev.isGroup && !ev.isNewsletter && phone !== RAFAEL) { for (const l of lidsDoEvento(ev)) gravar(P + "lid:" + l, phone); lembrarContato(phone, ev).catch(() => {}); }
+  if (ev.fromMe && ehLid && ev.type === "ReceivedCallback" && !ev.isGroup) {
     const real = await ler(P + "lid:" + phone);
     if (real) phone = String(real);
-    else console.log("Saiu do número da empresa pra um código @lid sem número conhecido", phone, "campos:", Object.keys(ev).join(","));
+    else {
+      if (ev.fromApi || enviadosPeloBot.has(String(ev.messageId))) return;
+      const quando0 = Number(ev.momment || 0); if (quando0 && Date.now() - quando0 > 5 * 60 * 1000) return;
+      const a = await acharPeloLid(phone, ev);
+      if (a.phone) phone = a.phone;
+      else { await new Promise(r => setTimeout(r, 4000)); if (enviadosPeloBot.has(String(ev.messageId))) return; return pausarNaDuvida(phone, ev, a.candidatos); }
+    }
   }
   if (ev.fromMe) console.log("Saiu do número da empresa", phone, "tipo:", ev.type || "-", ev.fromApi ? "(api)" : "");
   if (ev.type && ev.type !== "ReceivedCallback") return;
@@ -581,7 +632,7 @@ async function receberWhatsApp(ev) {
   }
 
   let texto = ev.text?.message || ev.buttonsResponseMessage?.message || ev.listResponseMessage?.title || "";
-  if (RAFAEL && phone === RAFAEL) { if (texto) await comandoRafael(texto); return; }
+  if (RAFAEL && phone === RAFAEL) { if (/^\s*seguir\b/i.test(texto)) await seguir(texto); else if (texto) await comandoRafael(texto); return; }
 
   let imagem = null, midia = false;
   if (ev.image) { midia = true; imagem = ev.image.imageUrl || null; texto = "[enviou uma foto do local]" + (ev.image.caption ? " " + ev.image.caption : ""); }
